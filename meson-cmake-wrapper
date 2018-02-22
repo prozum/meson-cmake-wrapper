@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+from sys import argv as arg
+from os import mkdir, path, getcwd
+from subprocess import call, Popen, PIPE
+import json
+
+
+class Meson():
+    def __init__(self, cmake):
+        self.cmake = cmake
+
+    def setup(self):
+        meson_file = path.join(self.cmake.src_dir, "meson.build")
+        if not path.exists(meson_file):
+            with open(meson_file, "w") as file:
+                file.write("project('empty')")
+
+        call(["meson", "setup"])
+
+    def build(self):
+        call(["ninja", self.cmake.target])
+
+    def get_targets(self):
+        self.setup()
+        target_json = Popen(["meson", "introspect",
+                             "--targets", self.cmake.build_dir],
+                            stdout=PIPE).communicate()[0]
+        return json.loads(target_json)
+
+
+class CMakeWrapper():
+    def __init__(self):
+        self.meson = Meson(self)
+        self.cmd = "help"
+        self.target = "all"
+        self.target_args = []
+
+    def run(self):
+        {
+            "help": self.help,
+            "version": self.version,
+            "generate": self.generate,
+            "build": self.build
+        }[self.cmd]()
+
+    def help(self):
+        pass
+
+    def version(self):
+        print("cmake version 3.0.0")
+
+    def generate(self):
+        if not path.exists(self.build_dir):
+            mkdir(self.build_dir)
+
+        cmake_files_path = path.join(self.build_dir, "CMakeFiles")
+        if not path.exists(cmake_files_path):
+            mkdir(cmake_files_path)
+
+        with open(path.join(cmake_files_path, "TargetDirectories.txt"), "w") as target_dir_file:
+            targets = self.meson.get_targets()
+            for target in targets:
+                target_path = path.join(cmake_files_path, target["name"] + ".dir")
+                target_dir_file.write(target_path + "\n")
+                if not path.exists(target_path):
+                    mkdir(target_path)
+                with open(path.join(target_path, "DependInfo.cmake"), 'a') as depend_file:
+                    depend_file.write("")
+                with open(path.join(target_path, "build.make"), 'a') as build_file:
+                    build_file.write(target_path + "/bar.c.o: bar.c\n")
+                    build_file.write(path.join(target_path, "build") + ": " + target["name"])
+
+        with open(path.join(cmake_files_path, "Makefile.cmake"), "w") as file:
+            file.write("")
+
+        with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
+            file.write("")
+
+    def build(self):
+        print("Building target: " + self.target)
+        meson.build()
+
+
+def main():
+    cmake = CMakeWrapper()
+
+    i = 0
+    while i < len(arg):
+        if arg[i] == "-version":
+            cmake.cmd = "version"
+        elif arg[i] == "-G":
+            cmake.cmd = "generate"
+            cmake.build_dir = getcwd()
+            i = i + 1
+            cmake.generator = arg[i]
+        elif arg[i] == "--build":
+            cmake.cmd = "build"
+            i = i + 1
+            cmake.src_dir = arg[i]
+        elif arg[i] == "--target":
+            i = i + 1
+            cmake.target = arg[i]
+            i = i + 1
+            while i < len(arg):
+                cmake.target_args.append(arg[i])
+                i = i + 1
+        else:
+            cmake.src_dir = arg[i]
+        i = i + 1
+
+    cmake.run()
+
+if __name__ == "__main__":
+    main()
