@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from sys import argv as arg
+from sys import argv
 from os import mkdir, path, getcwd
 from subprocess import call, Popen, PIPE
 import json
@@ -35,7 +35,31 @@ class CMakeWrapper():
         self.target = "all"
         self.target_args = []
 
-    def run(self):
+    def run(self, args):
+        i = 0
+        while i < len(args):
+            if args[i] == "-version":
+                self.cmd = "version"
+            elif arg[i] == "-G":
+                self.cmd = "generate"
+                self.build_dir = getcwd()
+                i += 1
+                self.generator = args[i]
+            elif args[i] == "--build":
+                self.cmd = "build"
+                i += 1
+                self.src_dir = args[i]
+            elif args[i] == "--target":
+                i += 1
+                self.target = args[i]
+                i += 1
+                while i < len(args):
+                    self.target_args.append(args[i])
+                    i += 1
+            else:
+                self.src_dir = arg[i]
+            i += 1
+
         {
             "help": self.help,
             "version": self.version,
@@ -84,31 +108,7 @@ class CMakeWrapper():
 def main():
     cmake = CMakeWrapper()
 
-    i = 0
-    while i < len(arg):
-        if arg[i] == "-version":
-            cmake.cmd = "version"
-        elif arg[i] == "-G":
-            cmake.cmd = "generate"
-            cmake.build_dir = getcwd()
-            i = i + 1
-            cmake.generator = arg[i]
-        elif arg[i] == "--build":
-            cmake.cmd = "build"
-            i = i + 1
-            cmake.src_dir = arg[i]
-        elif arg[i] == "--target":
-            i = i + 1
-            cmake.target = arg[i]
-            i = i + 1
-            while i < len(arg):
-                cmake.target_args.append(arg[i])
-                i = i + 1
-        else:
-            cmake.src_dir = arg[i]
-        i = i + 1
-
-    cmake.run()
+    cmake.run(argv)
 
 if __name__ == "__main__":
     main()
