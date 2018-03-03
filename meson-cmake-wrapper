@@ -32,7 +32,7 @@ class Meson():
         if target:
             return target["filename"]
 
-        return None
+        return target_name
 
     def get_targets(self):
         if not self.setup():
