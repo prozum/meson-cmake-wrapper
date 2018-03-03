@@ -12,16 +12,24 @@ class Meson():
     def setup(self):
         meson_file = path.join(self.cmake.src_dir, "meson.build")
         if not path.exists(meson_file):
-            with open(meson_file, "w") as file:
-                file.write("project('empty')")
+            print("No meson.build in source directory!")
+            return False
+
+        ninja_file = path.join(self.cmake.build_dir, "build.ninja")
+        if path.exists(ninja_file):
+            return True
 
         call(["meson", "setup"])
+        return True
 
     def build(self):
-        call(["ninja", self.cmake.target])
+        if self.setup():
+            call(["ninja", self.cmake.target])
 
     def get_targets(self):
-        self.setup()
+        if not self.setup():
+            return {}
+
         target_json = Popen(["meson", "introspect",
                              "--targets", self.cmake.build_dir],
                             stdout=PIPE).communicate()[0]
@@ -41,7 +49,7 @@ class CMakeWrapper():
         while i < len(args):
             if args[i] == "-version":
                 self.cmd = "version"
-            elif arg[i] == "-G":
+            elif args[i] == "-G":
                 self.cmd = "generate"
                 i += 1
                 self.generator = args[i]
@@ -57,7 +65,7 @@ class CMakeWrapper():
                     self.target_args.append(args[i])
                     i += 1
             else:
-                self.src_dir = arg[i]
+                self.src_dir = args[i]
             i += 1
 
         {
@@ -108,7 +116,7 @@ class CMakeWrapper():
 
     def build(self):
         print("Building target: " + self.target)
-        meson.build()
+        self.meson.build()
 
 
 def main():
