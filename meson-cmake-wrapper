@@ -10,14 +10,14 @@ class Meson():
         self.cmake = cmake
 
     def setup(self):
+        ninja_file = path.join(self.cmake.build_dir, "build.ninja")
+        if path.exists(ninja_file):
+            return True
+
         meson_file = path.join(self.cmake.src_dir, "meson.build")
         if not path.exists(meson_file):
             print("No meson.build in source directory!")
             return False
-
-        ninja_file = path.join(self.cmake.build_dir, "build.ninja")
-        if path.exists(ninja_file):
-            return True
 
         call(["meson", "setup"])
         return True
