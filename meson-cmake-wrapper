@@ -24,7 +24,15 @@ class Meson():
 
     def build(self):
         if self.setup():
-            call(["ninja", self.cmake.target])
+            call(["ninja", self.get_ninja_target(self.cmake.target)])
+
+    def get_ninja_target(self, target_name):
+
+        target = next((t for t in self.get_targets() if t["name"] == target_name), None)
+        if target:
+            return target["filename"]
+
+        return None
 
     def get_targets(self):
         if not self.setup():
@@ -117,7 +125,6 @@ class CMakeWrapper():
                     depend_file.write("")
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(path.join(target_path, "build.make"), 'w') as build_file:
-                    #build_file.write(path.join(target_path, "build") + ": " + target["filename"])
                     build_file.write(path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
 
 
