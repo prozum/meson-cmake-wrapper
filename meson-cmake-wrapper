@@ -82,33 +82,44 @@ class CMakeWrapper():
         print("cmake version 3.0.0")
 
     def generate(self):
+        print("Generate to build directory: " + self.build_dir)
         # Make sure build directory exists
         if not path.exists(self.build_dir):
             mkdir(self.build_dir)
 
-        cmake_files_path = path.join(self.build_dir, "CMakeFiles")
-        if not path.exists(cmake_files_path):
-            mkdir(cmake_files_path)
+        # CLion requires a CMakeFiles directory at root of build directory
+        root_cmakefiles_dir = path.join(self.build_dir, "CMakeFiles")
+        if not path.exists(root_cmakefiles_dir):
+            mkdir(root_cmakefiles_dir)
+        
+        # CLion requires that Makefile.cmake exists
+        with open(path.join(root_cmakefiles_dir, "Makefile.cmake"), "w") as file:
+            file.write("")
 
         # CLion fetches target directories from TargetDirectories.txt
-        with open(path.join(cmake_files_path, "TargetDirectories.txt"), "w") as target_dir_file:
+        with open(path.join(root_cmakefiles_dir, "TargetDirectories.txt"), "w") as target_dir_file:
             targets = self.meson.get_targets()
+            print(targets)
+            
             for target in targets:
+                # All directories under the build directory should have a CMakeFiles directory
+                cmakefiles_dir = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles")
+                if not path.exists(cmakefiles_dir):
+                    mkdir(cmakefiles_dir)
+                
                 # CLion fetches target name from TARGET_NAME.dir directories
-                target_path = path.join(cmake_files_path, target["name"] + ".dir")
+                target_path = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles", target["name"] + ".dir")
                 target_dir_file.write(target_path + "\n")
                 if not path.exists(target_path):
                     mkdir(target_path)
                 # CLion requires that TARGET_PATH/DependInfo.cmake exists
-                with open(path.join(target_path, "DependInfo.cmake"), 'a') as depend_file:
+                with open(path.join(target_path, "DependInfo.cmake"), 'w') as depend_file:
                     depend_file.write("")
                 # CLion fetches target name from TARGET_PATH/build.make
-                with open(path.join(target_path, "build.make"), 'a') as build_file:
-                    build_file.write(path.join(target_path, "build") + ": " + target["name"])
+                with open(path.join(target_path, "build.make"), 'w') as build_file:
+                    #build_file.write(path.join(target_path, "build") + ": " + target["filename"])
+                    build_file.write(path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
 
-        # CLion requires that Makefile.cmake exists
-        with open(path.join(cmake_files_path, "Makefile.cmake"), "w") as file:
-            file.write("")
 
         # CLion requires that CMakeCache.txt exists
         with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
