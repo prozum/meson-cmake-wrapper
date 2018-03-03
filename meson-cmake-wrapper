@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 from sys import argv
 from os import mkdir, path, getcwd
 from subprocess import call, Popen, PIPE
