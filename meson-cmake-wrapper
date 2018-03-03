@@ -34,6 +34,7 @@ class CMakeWrapper():
         self.cmd = "help"
         self.target = "all"
         self.target_args = []
+        self.build_dir = getcwd()
 
     def run(self, args):
         i = 0
@@ -42,7 +43,6 @@ class CMakeWrapper():
                 self.cmd = "version"
             elif arg[i] == "-G":
                 self.cmd = "generate"
-                self.build_dir = getcwd()
                 i += 1
                 self.generator = args[i]
             elif args[i] == "--build":
