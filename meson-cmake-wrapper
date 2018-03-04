@@ -2,6 +2,8 @@
 from sys import argv
 from os import mkdir, path, getcwd
 from subprocess import call, Popen, PIPE
+#import xml.etree.ElementTree as ET
+import lxml.etree as etree
 import json
 
 cmakecache="""
@@ -127,7 +129,7 @@ CMAKE_OBJCOPY:FILEPATH=/usr/bin/objcopy
 CMAKE_OBJDUMP:FILEPATH=/usr/bin/objdump
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=cmake_project
+CMAKE_PROJECT_NAME:STATIC={project_name}
 
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=/usr/bin/ranlib
@@ -179,10 +181,10 @@ CMAKE_STRIP:FILEPATH=/usr/bin/strip
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
 //Value Computed by CMake
-cmake_project_BINARY_DIR:STATIC={c.build_dir}
+{project_name}_BINARY_DIR:STATIC={build_dir}
 
 //Value Computed by CMake
-cmake_project_SOURCE_DIR:STATIC={c.src_dir}
+{project_name}_SOURCE_DIR:STATIC={src_dir}
 
 
 ########################
@@ -192,7 +194,7 @@ cmake_project_SOURCE_DIR:STATIC={c.src_dir}
 //ADVANCED property for variable: CMAKE_AR
 CMAKE_AR-ADVANCED:INTERNAL=1
 //This is the directory where this CMakeCache.txt was created
-CMAKE_CACHEFILE_DIR:INTERNAL={c.build_dir}
+CMAKE_CACHEFILE_DIR:INTERNAL={build_dir}
 //Major version of cmake used to create the current loaded cache
 CMAKE_CACHE_MAJOR_VERSION:INTERNAL=3
 //Minor version of cmake used to create the current loaded cache
@@ -265,7 +267,7 @@ CMAKE_GENERATOR_PLATFORM:INTERNAL=
 CMAKE_GENERATOR_TOOLSET:INTERNAL=
 //Source directory with the top level CMakeLists.txt file for this
 // project
-CMAKE_HOME_DIRECTORY:INTERNAL={c.src_dir}
+CMAKE_HOME_DIRECTORY:INTERNAL={src_dir}
 //Install .so files without execute permission.
 CMAKE_INSTALL_SO_NO_EXE:INTERNAL=0
 //ADVANCED property for variable: CMAKE_LINKER
@@ -295,7 +297,7 @@ CMAKE_PLATFORM_INFO_INITIALIZED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_RANLIB
 CMAKE_RANLIB-ADVANCED:INTERNAL=1
 //Path to CMake installation.
-CMAKE_ROOT:INTERNAL={c.path}
+CMAKE_ROOT:INTERNAL={path}
 //ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS
 CMAKE_SHARED_LINKER_FLAGS-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS_DEBUG
@@ -361,11 +363,37 @@ class Meson():
         if not self.setup():
             return {}
 
-        target_json = Popen(["meson", "introspect",
-                             "--targets", self.cmake.build_dir],
-                            stdout=PIPE).communicate()[0]
-        return json.loads(target_json)
+        output = Popen(["meson", "introspect",
+                        "--targets", self.cmake.build_dir],
+                       stdout=PIPE).communicate()[0]
+        return json.loads(output)
 
+    def get_target_files(self, target):
+        if not self.setup():
+            return []
+
+        output = Popen(["meson", "introspect",
+                        "--target-files", target["id"]],
+                       stdout=PIPE).communicate()[0]
+        return json.loads(output)
+
+    def get_buildsystem_files(self):
+        if not self.setup():
+            return []
+
+        output = Popen(["meson", "introspect",
+                        "--buildsystem-files"],
+                       stdout=PIPE).communicate()[0]
+        return json.loads(output)
+
+    def get_project_name(self):
+        if not self.setup():
+            return ""
+
+        output = Popen(["meson", "introspect",
+                        "--projectinfo", self.cmake.build_dir],
+                       stdout=PIPE).communicate()[0]
+        return json.loads(output)["name"]
 
 class CMakeWrapper():
     def __init__(self):
@@ -423,7 +451,7 @@ class CMakeWrapper():
         root_cmakefiles_dir = path.join(self.build_dir, "CMakeFiles")
         if not path.exists(root_cmakefiles_dir):
             mkdir(root_cmakefiles_dir)
-        
+
         # CLion requires that Makefile.cmake exists
         with open(path.join(root_cmakefiles_dir, "Makefile.cmake"), "w") as file:
             file.write("")
@@ -431,14 +459,13 @@ class CMakeWrapper():
         # CLion fetches target directories from TargetDirectories.txt
         with open(path.join(root_cmakefiles_dir, "TargetDirectories.txt"), "w") as target_dir_file:
             targets = self.meson.get_targets()
-            print(targets)
-            
+
             for target in targets:
                 # All directories under the build directory should have a CMakeFiles directory
                 cmakefiles_dir = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles")
                 if not path.exists(cmakefiles_dir):
                     mkdir(cmakefiles_dir)
-                
+
                 # CLion fetches target name from TARGET_NAME.dir directories
                 target_path = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles", target["name"] + ".dir")
                 target_dir_file.write(target_path + "\n")
@@ -452,14 +479,45 @@ class CMakeWrapper():
                     build_file.write(path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
 
 
-        # CLion requires that CMakeCache.txt exists
+        # CLion requires CMakeCache.txt
         with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
-            cmakecache_fmt = cmakecache.format(c=self)
+            data = {
+                "path": self.path,
+                "build_dir": self.build_dir,
+                "src_dir": self.src_dir,
+                "project_name": self.meson.get_project_name()
+            }
+            cmakecache_fmt = cmakecache.format(**data)
             file.write(cmakecache_fmt)
+
+        # CLion requires PROJECT_NAME.cbp for IDE integration
+        self.generate_cbp()
+
+        call(["ninja", "reconfigure"])
+
 
     def build(self):
         print("Building target: " + self.target)
         self.meson.build()
+
+    def generate_cbp(self):
+        root = etree.Element("CodeBlocks_project_file")
+        project = etree.SubElement(root, "Project")
+        virtual_folder = etree.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
+
+        for target in self.meson.get_targets():
+            target_files = self.meson.get_target_files(target)
+            for target_file in target_files:
+                unit = etree.SubElement(project, "Unit",  {"filename": path.join(self.src_dir, target_file)})
+                etree.SubElement(unit, "Option", {"target": target["name"]})
+
+        for file in self.meson.get_buildsystem_files():
+            unit = etree.SubElement(project, "Unit", {"filename": path.join(self.src_dir, file)})
+            etree.SubElement(unit, "Option",  {"virtualFolder": "Meson Files"})
+
+        project_file = path.join(self.build_dir, self.meson.get_project_name() + ".cbp")
+        with open(project_file, "w") as file:
+            file.write(etree.tostring(root, pretty_print = True, encoding = "unicode"))
 
 
 def main():

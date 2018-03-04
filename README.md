@@ -9,10 +9,10 @@ Change CLion Toolchains settings to use meson-cmake-wrapper instead of the cmake
 ### Works
 * Detect targets
 * Detect toolchain
+* Detect target files
 * Build target
 * Run target
 * Debug target
 
 ### TODO
-* Detect target files
 * Autocompletion
