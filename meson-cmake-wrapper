@@ -2,8 +2,7 @@
 from sys import argv
 from os import mkdir, path, getcwd
 from subprocess import call, Popen, PIPE
-#import xml.etree.ElementTree as ET
-import lxml.etree as etree
+import xml.etree.ElementTree as ET 
 import json
 
 cmakecache="""
@@ -501,23 +500,23 @@ class CMakeWrapper():
         self.meson.build()
 
     def generate_cbp(self):
-        root = etree.Element("CodeBlocks_project_file")
-        project = etree.SubElement(root, "Project")
-        virtual_folder = etree.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
+        root = ET.Element("CodeBlocks_project_file")
+        tree = ET.ElementTree(root)
+        project = ET.SubElement(root, "Project")
+        virtual_folder = ET.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
 
         for target in self.meson.get_targets():
             target_files = self.meson.get_target_files(target)
             for target_file in target_files:
-                unit = etree.SubElement(project, "Unit",  {"filename": path.join(self.src_dir, target_file)})
-                etree.SubElement(unit, "Option", {"target": target["name"]})
+                unit = ET.SubElement(project, "Unit",  {"filename": path.join(self.src_dir, target_file)})
+                ET.SubElement(unit, "Option", {"target": target["name"]})
 
         for file in self.meson.get_buildsystem_files():
-            unit = etree.SubElement(project, "Unit", {"filename": path.join(self.src_dir, file)})
-            etree.SubElement(unit, "Option",  {"virtualFolder": "Meson Files"})
+            unit = ET.SubElement(project, "Unit", {"filename": path.join(self.src_dir, file)})
+            ET.SubElement(unit, "Option",  {"virtualFolder": "Meson Files"})
 
         project_file = path.join(self.build_dir, self.meson.get_project_name() + ".cbp")
-        with open(project_file, "w") as file:
-            file.write(etree.tostring(root, pretty_print = True, encoding = "unicode"))
+        tree.write(project_file, "unicode", True)
 
 
 def main():
