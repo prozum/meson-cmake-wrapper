@@ -5,6 +5,7 @@ Build system wrapper that provides Meson integration in CMake IDE's.
 
 ### Setup
 In Toolchain settings (File > Settings > Build, Execution, Deployment > Toolchains):
+
 Change CMake option to path of meson-cmake-wrapper.
 
 ### Works
