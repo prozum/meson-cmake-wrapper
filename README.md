@@ -1,10 +1,11 @@
 # meson-cmake-wrapper
-Build system wrapper that allows Meson support in CMake IDE's
+Build system wrapper that provides Meson integration in CMake IDE's.
 
 ## CLion
 
 ### Setup
-Change CLion Toolchains settings to use meson-cmake-wrapper instead of the cmake binary.
+In Toolchain settings (File > Settings > Build, Execution, Deployment > Toolchains):
+Change CMake option to path of meson-cmake-wrapper.
 
 ### Works
 * Detect targets
@@ -12,6 +13,7 @@ Change CLion Toolchains settings to use meson-cmake-wrapper instead of the cmake
 * Detect target files
 * Build target
 * Run target
+* Run target with valgrind
 * Debug target
 
 ### TODO
