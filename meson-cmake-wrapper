@@ -344,7 +344,7 @@ class Meson:
             print("No meson.build in source directory!")
             return False
 
-        call(["meson", "setup"])
+        call(["meson", "setup", self.cmake.source_dir])
         return True
 
     def build(self):
