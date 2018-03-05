@@ -521,7 +521,7 @@ class CMakeWrapper:
             unit = ETree.SubElement(project, "Unit", {"filename": path.join(self.source_dir, file)})
             ETree.SubElement(unit, "Option", {"virtualFolder": "Meson Files"})
 
-        project_file = path.join(self.build_dir, self.meson.get_project_name() + ".cbp")
+        project_file = path.join(self.build_dir, self.meson.get_project_info()["name"] + ".cbp")
         tree.write(project_file, "unicode", True)
 
 
