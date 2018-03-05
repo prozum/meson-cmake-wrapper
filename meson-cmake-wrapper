@@ -195,11 +195,11 @@ CMAKE_AR-ADVANCED:INTERNAL=1
 //This is the directory where this CMakeCache.txt was created
 CMAKE_CACHEFILE_DIR:INTERNAL={build_dir}
 //Major version of cmake used to create the current loaded cache
-CMAKE_CACHE_MAJOR_VERSION:INTERNAL=3
+CMAKE_CACHE_MAJOR_VERSION:INTERNAL={version_major}
 //Minor version of cmake used to create the current loaded cache
-CMAKE_CACHE_MINOR_VERSION:INTERNAL=10
+CMAKE_CACHE_MINOR_VERSION:INTERNAL={version_minor}
 //Patch version of cmake used to create the current loaded cache
-CMAKE_CACHE_PATCH_VERSION:INTERNAL=1
+CMAKE_CACHE_PATCH_VERSION:INTERNAL={version_micro}
 //ADVANCED property for variable: CMAKE_COLOR_MAKEFILE
 CMAKE_COLOR_MAKEFILE-ADVANCED:INTERNAL=1
 //Path to CMake executable.
@@ -385,6 +385,7 @@ class Meson:
 class CMakeWrapper:
     def __init__(self):
         self.meson = Meson(self)
+        self.version = [3, 10, 0]
         self.path = ""
         self.command = "generate"
         self.generator = "Unix Makefiles"
@@ -398,12 +399,17 @@ class CMakeWrapper:
         self.path = args[0]
         i = 1
         while i < len(args):
-            if args[i] == "-version":
+            if args[i] == "-version" or args[i] == "--version":
                 self.command = "version"
+            if args[i] == "-help" or args[i] == "--help":
+                self.command = "help"
             elif args[i] == "-G":
                 self.command = "generate"
                 i += 1
                 self.generator = args[i]
+            elif args[i].startswith("-G"):
+                self.command = "generate"
+                self.generator = args[i][2:]
             elif args[i] == "--build":
                 self.command = "build"
                 i += 1
@@ -411,37 +417,43 @@ class CMakeWrapper:
             elif args[i] == "--target":
                 i += 1
                 self.target = args[i]
+            elif args[i] == "--":
                 i += 1
                 while i < len(args):
                     self.target_args.append(args[i])
                     i += 1
+            elif args[i] == "-E":
+                i += 1
+                self.command = args[i]
             elif args[i].startswith("-D"):
                 if ":" in args[i]:
                     key, rest = args[i][2:].split(":", 1)
-                    ty, value = rest.split("=", 1)
+                    ty, val = rest.split("=", 1)
                 else:
                     key, val = args[i][2:].split("=", 1)
-                self.options[key] = (value, ty)
+                    ty = "STRING"
+                self.options[key] = (val, ty)
             else:
                 self.source_dir = args[i]
             i += 1
 
-        print(self.options)
         {
-            "help": self.help,
-            "version": self.version,
-            "generate": self.generate,
-            "build": self.build
+            "version": self.version_cmd,
+            "help": self.help_cmd,
+            "generate": self.generate_cmd,
+            "build": self.build_cmd,
+            "capabilities": self.capabilities_cmd
         }[self.command]()
 
-    def help(self):
-        pass
+    @staticmethod
+    def version_cmd(self):
+        print("cmake version {0}".format(".".join(map(str, self.version))))
 
     @staticmethod
-    def version():
-        print("cmake version 3.0.0")
+    def help_cmd(self):
+        pass
 
-    def generate(self):
+    def generate_cmd(self):
         print("Generate to build directory: " + self.build_dir)
 
         # Make sure meson is setup
@@ -486,26 +498,43 @@ class CMakeWrapper:
                         path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
 
         # CLion requires CMakeCache.txt
+        self.gen_cmake_cache()
+
+        # CLion requires PROJECT_NAME.cbp for IDE integration
+        self.gen_codeblocks_project()
+
+        call(["ninja", "reconfigure"])
+
+    def build_cmd(self):
+        print("Building target: " + self.target)
+        self.meson.build()
+
+    def capabilities_cmd(self):
+        data = {"generators": [
+            {"extraGenerators": ["CodeBlocks"],
+             "name": "Unix Makefiles", "platformSupport": False, "toolsetSupport": False},
+            {"extraGenerators": ["CodeBlocks"], "name": "Ninja",
+             "platformSupport": False, "toolsetSupport": False}], "serverMode": False,
+            "version": {"isDirty": False, "major": self.version[0], "minor": self.version[1], "patch": self.version[2],
+                        "string": ".".join(map(str, self.version)), "suffix": ""}}
+        print(json.dumps(data))
+
+    def gen_cmake_cache(self):
         with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
             data = {
                 "path": self.path,
                 "build_dir": self.build_dir,
                 "source_dir": self.source_dir,
-                "project_name": self.meson.get_project_info()["name"]
+                "project_name": self.meson.get_project_info()["name"],
+                "version_major": self.version[0],
+                "version_minor": self.version[1],
+                "version_micro": self.version[2]
+
             }
             cmakecache_fmt = cmakecache.format(**data)
             file.write(cmakecache_fmt)
 
-        # CLion requires PROJECT_NAME.cbp for IDE integration
-        self.generate_cbp()
-
-        call(["ninja", "reconfigure"])
-
-    def build(self):
-        print("Building target: " + self.target)
-        self.meson.build()
-
-    def generate_cbp(self):
+    def gen_codeblocks_project(self):
         root = ETree.Element("CodeBlocks_project_file")
         tree = ETree.ElementTree(root)
         project = ETree.SubElement(root, "Project")
