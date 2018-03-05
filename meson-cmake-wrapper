@@ -348,8 +348,7 @@ class Meson:
         return True
 
     def build(self):
-        if self.setup():
-            call(["ninja", self.get_ninja_target(self.cmake.target)])
+        call(["ninja", self.get_ninja_target(self.cmake.target)])
 
     def get_ninja_target(self, target_name):
         target = next((t for t in self.get_targets() if t["name"] == target_name), None)
@@ -359,40 +358,28 @@ class Meson:
         return target_name
 
     def get_targets(self):
-        if not self.setup():
-            return {}
-
         output = Popen(["meson", "introspect",
                         "--targets", self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
     def get_target_files(self, target):
-        if not self.setup():
-            return []
-
         output = Popen(["meson", "introspect",
                         "--target-files", target["id"]],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
     def get_buildsystem_files(self):
-        if not self.setup():
-            return []
-
         output = Popen(["meson", "introspect",
                         "--buildsystem-files"],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
-    def get_project_name(self):
-        if not self.setup():
-            return ""
-
+    def get_project_info(self):
         output = Popen(["meson", "introspect",
                         "--projectinfo", self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
-        return json.loads(output)["name"]
+        return json.loads(output)
 
 
 class CMakeWrapper:
@@ -447,6 +434,11 @@ class CMakeWrapper:
 
     def generate(self):
         print("Generate to build directory: " + self.build_dir)
+
+        # Make sure meson is setup
+        if not self.meson.setup():
+            return
+
         # Make sure build directory exists
         if not path.exists(self.build_dir):
             mkdir(self.build_dir)
@@ -490,7 +482,7 @@ class CMakeWrapper:
                 "path": self.path,
                 "build_dir": self.build_dir,
                 "source_dir": self.source_dir,
-                "project_name": self.meson.get_project_name()
+                "project_name": self.meson.get_project_info()["name"]
             }
             cmakecache_fmt = cmakecache.format(**data)
             file.write(cmakecache_fmt)
