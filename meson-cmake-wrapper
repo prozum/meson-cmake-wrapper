@@ -388,6 +388,7 @@ class CMakeWrapper:
         self.path = ""
         self.command = "generate"
         self.generator = "Unix Makefiles"
+        self.options = {}
         self.target = "all"
         self.target_args = []
         self.build_dir = getcwd()
@@ -414,10 +415,18 @@ class CMakeWrapper:
                 while i < len(args):
                     self.target_args.append(args[i])
                     i += 1
+            elif args[i].startswith("-D"):
+                if ":" in args[i]:
+                    key, rest = args[i][2:].split(":", 1)
+                    ty, value = rest.split("=", 1)
+                else:
+                    key, val = args[i][2:].split("=", 1)
+                self.options[key] = (value, ty)
             else:
                 self.source_dir = args[i]
             i += 1
 
+        print(self.options)
         {
             "help": self.help,
             "version": self.version,
