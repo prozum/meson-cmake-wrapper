@@ -3,7 +3,7 @@ import json
 import socket
 import xml.etree.ElementTree as ETree
 from os import mkdir, path, getcwd
-from subprocess import call, Popen, PIPE
+from subprocess import call, Popen, PIPE, DEVNULL
 from sys import argv
 
 cmakecache = """
@@ -403,6 +403,14 @@ class Meson:
         else:
             return None
 
+    def get_defines(self, target):
+        compile_commands = self.get_compile_commands(target)
+        if compile_commands:
+            args = compile_commands["command"].split()
+            return [arg for arg in args if arg.startswith("-D")]
+        else:
+            return []
+
     def get_include_directories(self, target=None):
         if not target:
             target = self.get_targets()[0]
@@ -410,10 +418,36 @@ class Meson:
         compile_commands = self.get_compile_commands(target)
 
         if compile_commands:
+            def_inc_dirs = self.get_default_include_directories(target)
             args = compile_commands["command"].split()
-            return [path.abspath(path.join(self.cmake.build_dir, arg[2:])) for arg in args if arg.startswith("-I")]
+            return [path.abspath(path.join(self.cmake.build_dir, arg[2:])) for arg in args if
+                    arg.startswith("-I")] + def_inc_dirs
         else:
             return []
+
+    def get_default_include_directories(self, target=None):
+        compiler = self.get_compiler(target)
+
+        if compiler.endswith("++"):
+            lang = "c++"
+        else:
+            lang = "c"
+
+        output = Popen([compiler, "-x" + lang, '-E', '-v', '-'], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
+        stderr = output.stderr.read().decode()
+        start = False
+        paths = []
+        for line in stderr.split('\n'):
+            if not start:
+                if line == '#include <...> search starts here:':
+                    start = True
+            elif start:
+                if line == 'End of search list.':
+                    break
+                else:
+                    paths.append(path.abspath(line[1:]))
+
+        return paths
 
 
 class CMakeWrapper:
@@ -597,10 +631,11 @@ class CMakeWrapper:
     def gen_codeblocks_project(self):
         root = ETree.Element("CodeBlocks_project_file")
         tree = ETree.ElementTree(root)
+        ETree.SubElement(root, "FileVersion", {"major": "1", "minor": "6"})
         project = ETree.SubElement(root, "Project")
         ETree.SubElement(project, "Option", {"title": self.meson.get_project_info()["name"]})
         ETree.SubElement(project, "Option", {"makefile_is_custom": "1"})
-        ETree.SubElement(project, "Option", {"compiler": self.meson.get_compiler()})
+        ETree.SubElement(project, "Option", {"compiler": "gcc"})
         ETree.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
 
         build = ETree.SubElement(project, "Build")
@@ -610,10 +645,20 @@ class CMakeWrapper:
             ETree.SubElement(build_target, "Option", {"output": path.join(self.build_dir, target["name"])})
             ETree.SubElement(build_target, "Option", {"working_dir": self.build_dir})
             ETree.SubElement(build_target, "Option", {"object_output": self.build_dir})
-            ETree.SubElement(build_target, "Option", {"type": "1"})
-            ETree.SubElement(build_target, "Option", {"compiler": self.meson.get_compiler()})
+            ty = {
+                "executable": "1",
+                "shared library": "3",
+                "custom": "4"
+            }[target["type"]]
+            ETree.SubElement(build_target, "Option", {"type": ty})
 
-            compiler = ETree.SubElement(build_target, "compiler")
+            compiler = self.meson.get_compiler(target)
+            if compiler:
+                ETree.SubElement(build_target, "Option", {"compiler": "gcc"})
+
+            compiler = ETree.SubElement(build_target, "Compiler")
+            for define in self.meson.get_defines(target):
+                ETree.SubElement(compiler, "Add", {"option": define})
             for include_dir in self.meson.get_include_directories(target):
                 ETree.SubElement(compiler, "Add", {"directory": include_dir})
 
