@@ -332,8 +332,9 @@ CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
 
 
 class Meson:
-    def __init__(self, cmake):
+    def __init__(self, cmake, path="meson"):
         self.cmake = cmake
+        self.path = path
 
     def setup(self):
         ninja_file = path.join(self.cmake.build_dir, "build.ninja")
@@ -345,7 +346,7 @@ class Meson:
             print("No meson.build in source directory!")
             return False
 
-        call(["meson", "setup", self.cmake.source_dir])
+        call([self.path, "setup", self.cmake.source_dir])
         return True
 
     def build(self):
@@ -359,28 +360,60 @@ class Meson:
         return target_name
 
     def get_targets(self):
-        output = Popen(["meson", "introspect",
+        output = Popen([self.path, "introspect",
                         "--targets", self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
     def get_target_files(self, target):
-        output = Popen(["meson", "introspect",
-                        "--target-files", target["id"]],
+        output = Popen([self.path, "introspect",
+                        "--target-files", target["id"], self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
     def get_buildsystem_files(self):
-        output = Popen(["meson", "introspect",
-                        "--buildsystem-files"],
+        output = Popen([self.path, "introspect",
+                        "--buildsystem-files", self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
 
     def get_project_info(self):
-        output = Popen(["meson", "introspect",
+        output = Popen([self.path, "introspect",
                         "--projectinfo", self.cmake.build_dir],
                        stdout=PIPE).communicate()[0]
         return json.loads(output)
+
+    def get_compile_commands(self, target):
+        json_data = open(path.join(self.cmake.build_dir, "compile_commands.json")).read()
+        compile_commands = json.loads(json_data)
+
+        # Only way to identify target compiler commands from compile_commands.json
+        # is by using a file from the wanted target
+        target_file = path.relpath(path.join(self.cmake.source_dir, self.get_target_files(target)[0]))
+        return next((cmd for cmd in compile_commands if cmd["file"] == target_file), None)
+
+    def get_compiler(self, target=None):
+        if not target:
+            target = self.get_targets()[0]
+
+        compile_commands = self.get_compile_commands(target)
+
+        if compile_commands:
+            return compile_commands["command"].split()[0]
+        else:
+            return None
+
+    def get_include_directories(self, target=None):
+        if not target:
+            target = self.get_targets()[0]
+
+        compile_commands = self.get_compile_commands(target)
+
+        if compile_commands:
+            args = compile_commands["command"].split()
+            return [path.abspath(path.join(self.cmake.build_dir, arg[2:])) for arg in args if arg.startswith("-I")]
+        else:
+            return []
 
 
 class CMakeWrapper:
@@ -434,10 +467,13 @@ class CMakeWrapper:
                 else:
                     key, val = args[i][2:].split("=", 1)
                     ty = "STRING"
-                self.options[key] = (val, ty)
+                self.options[key.lower()] = (val, ty)
             else:
                 self.source_dir = args[i]
             i += 1
+
+        if "meson" in self.options.keys():
+            self.meson.path = self.options["meson"][0]
 
         if not hasattr(self, self.command + "_cmd"):
             print("Unsupported command: " + self.command)
@@ -562,7 +598,29 @@ class CMakeWrapper:
         root = ETree.Element("CodeBlocks_project_file")
         tree = ETree.ElementTree(root)
         project = ETree.SubElement(root, "Project")
+        ETree.SubElement(project, "Option", {"title": self.meson.get_project_info()["name"]})
+        ETree.SubElement(project, "Option", {"makefile_is_custom": "1"})
+        ETree.SubElement(project, "Option", {"compiler": self.meson.get_compiler()})
         ETree.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
+
+        build = ETree.SubElement(project, "Build")
+
+        for target in self.meson.get_targets():
+            build_target = ETree.SubElement(build, "Target", {"title": target["name"]})
+            ETree.SubElement(build_target, "Option", {"output": path.join(self.build_dir, target["name"])})
+            ETree.SubElement(build_target, "Option", {"working_dir": self.build_dir})
+            ETree.SubElement(build_target, "Option", {"object_output": self.build_dir})
+            ETree.SubElement(build_target, "Option", {"type": "1"})
+            ETree.SubElement(build_target, "Option", {"compiler": self.meson.get_compiler()})
+
+            compiler = ETree.SubElement(build_target, "compiler")
+            for include_dir in self.meson.get_include_directories(target):
+                ETree.SubElement(compiler, "Add", {"directory": include_dir})
+
+            make_commands = ETree.SubElement(build_target, "MakeCommands")
+            # TODO: lookup path to ninja
+            ETree.SubElement(make_commands, "Build", {"command": "/usr/bin/ninja " + target["id"]})
+            ETree.SubElement(make_commands, "CompileFile", {"command": "/usr/bin/ninja " + target["id"]})
 
         for target in self.meson.get_targets():
             target_files = self.meson.get_target_files(target)
