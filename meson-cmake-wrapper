@@ -732,6 +732,14 @@ class CMakeWrapper:
                 unit = ETree.SubElement(project, "Unit", {"filename": path.join(self.source_dir, target_file)})
                 ETree.SubElement(unit, "Option", {"target": target["name"]})
 
+                base = path.splitext(path.basename(target_file))[0]
+                header_exts = ("h", "hpp")
+                for ext in header_exts:
+                    header_file = path.abspath(path.join(self.source_dir, path.dirname(target_file), path.join(base + "." + ext)))
+                    if path.exists(header_file):
+                        unit = ETree.SubElement(project, "Unit", {"filename": header_file})
+                        ETree.SubElement(unit, "Option", {"target": target["name"]})
+
         for file in self.meson.get_buildsystem_files():
             unit = ETree.SubElement(project, "Unit", {"filename": path.join(self.source_dir, file)})
             ETree.SubElement(unit, "Option", {"virtualFolder": "Meson Files"})
