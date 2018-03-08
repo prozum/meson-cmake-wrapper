@@ -332,9 +332,11 @@ CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
 
 
 class Meson:
-    def __init__(self, cmake, path="meson"):
+    def __init__(self, cmake, meson_path):
         self.cmake = cmake
-        self.path = path
+        self.meson_path = meson_path
+        self.build_dir = path.join(cmake.build_dir, "meson-build")
+        self.source_dir = cmake.source_dir
 
         # Cache
         self.c_targets = None
@@ -345,36 +347,12 @@ class Meson:
         self.c_compile_commands_target = {}
         self.c_def_inc_dirs = {}
 
-
-    def setup(self):
-        ninja_file = path.join(self.cmake.build_dir, "build.ninja")
-        if path.exists(ninja_file):
-            return True
-
-        meson_file = path.join(self.cmake.source_dir, "meson.build")
-        if not path.exists(meson_file):
-            print("No meson.build in source directory!")
-            return False
-
-        call([self.path, "setup", self.cmake.source_dir])
-        return True
-
-    def build(self):
-        call(["ninja", self.get_ninja_target(self.cmake.target)])
-
-    def get_ninja_target(self, target_name):
-        target = next((t for t in self.get_targets() if t["name"] == target_name), None)
-        if target:
-            return target["filename"]
-
-        return target_name
-
     def get_targets(self):
         if self.c_targets:
             return self.c_targets
 
-        output = Popen([self.path, "introspect",
-                        "--targets", self.cmake.build_dir],
+        output = Popen([self.meson_path, "introspect",
+                        "--targets", self.build_dir],
                        stdout=PIPE).communicate()[0]
         self.c_targets = json.loads(output)
         return self.c_targets
@@ -383,8 +361,8 @@ class Meson:
         id = target["id"]
         if id in self.c_target_files:
             return self.c_target_files[id]
-        output = Popen([self.path, "introspect",
-                        "--target-files", id, self.cmake.build_dir],
+        output = Popen([self.meson_path, "introspect",
+                        "--target-files", id, self.build_dir],
                        stdout=PIPE).communicate()[0]
         self.c_target_files[id] = json.loads(output)
         return self.c_target_files[id]
@@ -392,8 +370,8 @@ class Meson:
     def get_buildsystem_files(self):
         if self.c_buildsystem_files:
             return self.c_buildsystem_files
-        output = Popen([self.path, "introspect",
-                        "--buildsystem-files", self.cmake.build_dir],
+        output = Popen([self.meson_path, "introspect",
+                        "--buildsystem-files", self.build_dir],
                        stdout=PIPE).communicate()[0]
         self.c_buildsystem_files = json.loads(output)
         return self.c_buildsystem_files
@@ -401,8 +379,8 @@ class Meson:
     def get_project_info(self):
         if self.c_project_info:
             return self.c_project_info
-        output = Popen([self.path, "introspect",
-                        "--projectinfo", self.cmake.build_dir],
+        output = Popen([self.meson_path, "introspect",
+                        "--projectinfo", self.build_dir],
                        stdout=PIPE).communicate()[0]
         self.c_project_info = json.loads(output)
         return self.c_project_info
@@ -413,12 +391,12 @@ class Meson:
             return self.c_compile_commands_target[id]
 
         if not self.c_compile_commands:
-            json_data = open(path.join(self.cmake.build_dir, "compile_commands.json")).read()
+            json_data = open(path.join(self.build_dir, "compile_commands.json")).read()
             self.c_compile_commands = json.loads(json_data)
 
         # Only way to identify target compiler commands from compile_commands.json
         # is by using a file from the wanted target
-        target_file = path.relpath(path.join(self.cmake.source_dir, self.get_target_files(target)[0]))
+        target_file = path.relpath(path.join(self.source_dir, self.get_target_files(target)[0]))
         self.c_compile_commands_target[id] = next(
             (cmd for cmd in self.c_compile_commands if cmd["file"] == target_file), None)
         return self.c_compile_commands_target[id]
@@ -462,7 +440,7 @@ class Meson:
             else:
                 def_inc_dirs = []
             args = compile_commands["command"].split()
-            return [path.abspath(path.join(self.cmake.build_dir, arg[2:])) for arg in args if
+            return [path.abspath(path.join(self.build_dir, arg[2:])) for arg in args if
                     arg.startswith("-I")] + def_inc_dirs
         else:
             return []
@@ -496,14 +474,46 @@ class Meson:
         return self.c_def_inc_dirs[lang]
 
 
+class MesonNinja(Meson):
+    def __init__(self, cmake, meson_path, ninja_path="ninja"):
+        super().__init__(cmake, meson_path)
+        self.ninja_path = ninja_path
+
+    def setup(self):
+        ninja_file = path.join(self.build_dir, "build.ninja")
+        if path.exists(ninja_file):
+            return True
+
+        meson_file = path.join(self.source_dir, "meson.build")
+        if not path.exists(meson_file):
+            print("No meson.build in source directory!")
+            return False
+
+        return call([self.meson_path, "setup", self.source_dir, self.build_dir]) == 0
+
+    def resetup(self):
+        call([self.ninja_path, "-C", self.build_dir, "reconfigure"])
+
+    def build(self):
+        call([self.ninja_path, "-C", self.build_dir, self.get_ninja_target(self.cmake.target)])
+
+    def get_ninja_target(self, target_name):
+        target = next((t for t in self.get_targets() if t["name"] == target_name), None)
+        if target:
+            return target["filename"]
+
+        return target_name
+
+
 class CMakeWrapper:
     def __init__(self):
-        self.meson = Meson(self)
         self.version = [3, 10, 0]
         self.path = ""
         self.command = "generate"
         self.generator = "Unix Makefiles"
-        self.options = {}
+        self.options = {
+            "meson": ("meson", "STRING")
+        }
         self.target = "all"
         self.target_args = []
         self.build_dir = getcwd()
@@ -552,8 +562,7 @@ class CMakeWrapper:
                 self.source_dir = args[i]
             i += 1
 
-        if "meson" in self.options.keys():
-            self.meson.path = self.options["meson"][0]
+        self.meson = MesonNinja(self, self.options["meson"][0])
 
         if not hasattr(self, self.command + "_cmd"):
             print("Unsupported command: " + self.command)
@@ -651,7 +660,7 @@ class CMakeWrapper:
         # CLion requires PROJECT_NAME.cbp for IDE integration
         self.gen_codeblocks_project()
 
-        call(["ninja", "reconfigure"])
+        self.meson.resetup()
 
     def build_cmd(self):
         print("Building target: " + self.target)
