@@ -434,6 +434,14 @@ class Meson:
         else:
             return None
 
+    def get_flags(self, target):
+        compile_commands = self.get_compile_commands(target)
+        if compile_commands:
+            args = compile_commands["command"].split()[1:]
+            return [arg for arg in args if not arg.startswith(("-D", "-I"))]
+        else:
+            return []
+
     def get_defines(self, target):
         compile_commands = self.get_compile_commands(target)
         if compile_commands:
@@ -442,14 +450,17 @@ class Meson:
         else:
             return []
 
-    def get_include_directories(self, target=None):
+    def get_include_directories(self, target=None, def_inc=True):
         if not target:
             target = self.get_targets()[0]
 
         compile_commands = self.get_compile_commands(target)
 
         if compile_commands:
-            def_inc_dirs = self.get_default_include_directories(target)
+            if def_inc:
+                def_inc_dirs = self.get_default_include_directories(target)
+            else:
+                def_inc_dirs = []
             args = compile_commands["command"].split()
             return [path.abspath(path.join(self.cmake.build_dir, arg[2:])) for arg in args if
                     arg.startswith("-I")] + def_inc_dirs
@@ -613,13 +624,26 @@ class CMakeWrapper:
                 target_dir_file.write(target_path + "\n")
                 if not path.exists(target_path):
                     mkdir(target_path)
+
                 # CLion requires that TARGET_PATH/DependInfo.cmake exists
                 with open(path.join(target_path, "DependInfo.cmake"), 'w') as depend_file:
                     depend_file.write("")
+
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(path.join(target_path, "build.make"), 'w') as build_file:
                     build_file.write(
                         path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
+
+                with open(path.join(target_path, "flags.make"), 'w') as flags_file:
+                    compiler = self.meson.get_compiler(target)
+                    if compiler:
+                        if compiler.endswith("++"):
+                            prefix = "CXX"
+                        else:
+                            prefix = "CC"
+                        flags_file.write(prefix + "_FLAGS = " + " ".join(self.meson.get_flags(target)) + "\n")
+                        flags_file.write(prefix + "_DEFINES = " + " ".join(self.meson.get_defines(target)) + "\n")
+                        flags_file.write(prefix + "_INCLUDES = " + " ".join(["-I" + inc_dir for inc_dir in self.meson.get_include_directories(target, False)]) + "\n")
 
         # CLion requires CMakeCache.txt
         self.gen_cmake_cache()
