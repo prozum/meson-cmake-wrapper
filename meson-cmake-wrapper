@@ -21,7 +21,7 @@ class Meson:
         self.c_project_info = None
         self.c_compile_commands = None
         self.c_compile_commands_target = {}
-        self.c_def_inc_dirs = {}
+        self.c_default_inc_dirs = {}
 
     def get_targets(self):
         if self.c_targets:
@@ -129,8 +129,8 @@ class Meson:
         else:
             lang = "c"
 
-        if lang in self.c_def_inc_dirs:
-            return self.c_def_inc_dirs[lang]
+        if lang in self.c_default_inc_dirs:
+            return self.c_default_inc_dirs[lang]
 
         output = Popen([compiler, "-x" + lang, '-E', '-v', '-'], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
         stderr = output.stderr.read().decode()
@@ -146,8 +146,8 @@ class Meson:
                 else:
                     paths.append(path.abspath(line[1:]))
 
-        self.c_def_inc_dirs[lang] = paths
-        return self.c_def_inc_dirs[lang]
+        self.c_default_inc_dirs[lang] = paths
+        return self.c_default_inc_dirs[lang]
 
 
 class MesonNinja(Meson):
