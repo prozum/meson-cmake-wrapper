@@ -8,6 +8,10 @@ from sys import argv
 
 
 class Meson:
+    """
+    Base class that handles fetching data from Meson.
+    """
+
     def __init__(self, cmake, meson_path):
         self.cmake = cmake
         self.meson_path = meson_path
@@ -151,6 +155,10 @@ class Meson:
 
 
 class MesonNinja(Meson):
+    """
+    Class that handles interaction with Ninja.
+    """
+
     def __init__(self, cmake, meson_path, ninja_path="ninja"):
         super().__init__(cmake, meson_path)
         self.ninja_path = ninja_path
@@ -182,6 +190,10 @@ class MesonNinja(Meson):
 
 
 class CMakeWrapper:
+    """
+    Class that emulates CMake commands and translates them to the equivalent in Meson.
+    """
+
     def __init__(self):
         self.version = [3, 10, 0]
         self.path = ""
@@ -616,6 +628,10 @@ class CMakeWrapper:
 
 
 class CMakeWrapperServer:
+    """
+    Class that emulates CMake Server Mode.
+    """
+
     def __init__(self, cmake):
         self.cmake = cmake
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -637,11 +653,4 @@ class CMakeWrapperServer:
         conn.close()
 
 
-def main():
-    cmake_wrapper = CMakeWrapper()
-
-    cmake_wrapper.run(argv)
-
-
-if __name__ == "__main__":
-    main()
+CMakeWrapper().run(argv)
