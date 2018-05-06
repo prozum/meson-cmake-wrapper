@@ -3,6 +3,7 @@ import json
 import socket
 import xml.etree.ElementTree as ETree
 from os import mkdir, path, getcwd
+from pathlib import Path
 from subprocess import call, Popen, PIPE, DEVNULL
 from sys import argv
 
@@ -44,6 +45,10 @@ class Meson:
         output = Popen([self.meson_path, "introspect",
                         "--target-files", id, self.build_dir],
                        stdout=PIPE).communicate()[0]
+        # Workaround https://github.com/mesonbuild/meson/issues/2783
+        if output == b'':
+            return []
+
         self.c_target_files[id] = json.loads(output)
         return self.c_target_files[id]
 
@@ -76,6 +81,8 @@ class Meson:
 
         # Only way to identify target compiler commands from compile_commands.json
         # is by using a file from the wanted target
+        if len(self.get_target_files(target)) == 0:
+            return []
         target_file = path.relpath(path.join(self.source_dir, self.get_target_files(target)[0]))
         self.c_compile_commands_target[id] = next(
             (cmd for cmd in self.c_compile_commands if cmd["file"] == target_file), None)
@@ -86,44 +93,42 @@ class Meson:
             target = self.get_targets()[0]
 
         compile_commands = self.get_compile_commands(target)
-
-        if compile_commands:
-            return compile_commands["command"].split()[0]
-        else:
+        if not compile_commands:
             return None
+
+        return compile_commands["command"].split()[0]
 
     def get_flags(self, target):
         compile_commands = self.get_compile_commands(target)
-        if compile_commands:
-            args = compile_commands["command"].split()[1:]
-            return [arg for arg in args if not arg.startswith(("-D", "-I"))]
-        else:
+        if not compile_commands:
             return []
+
+        args = compile_commands["command"].split()[1:]
+        return [arg for arg in args if not arg.startswith(("-D", "-I"))]
 
     def get_defines(self, target):
         compile_commands = self.get_compile_commands(target)
-        if compile_commands:
-            args = compile_commands["command"].split()
-            return [arg for arg in args if arg.startswith("-D")]
-        else:
+        if not compile_commands:
             return []
+
+        args = compile_commands["command"].split()
+        return [arg for arg in args if arg.startswith("-D")]
 
     def get_include_directories(self, target=None, def_inc=True):
         if not target:
             target = self.get_targets()[0]
 
         compile_commands = self.get_compile_commands(target)
-
-        if compile_commands:
-            if def_inc:
-                def_inc_dirs = self.get_default_include_directories(target)
-            else:
-                def_inc_dirs = []
-            args = compile_commands["command"].split()
-            return [path.abspath(path.join(self.build_dir, arg[2:])) for arg in args if
-                    arg.startswith("-I")] + def_inc_dirs
-        else:
+        if not compile_commands:
             return []
+
+        if def_inc:
+            def_inc_dirs = self.get_default_include_directories(target)
+        else:
+            def_inc_dirs = []
+        args = compile_commands["command"].split()
+        return [path.abspath(path.join(self.build_dir, arg[2:])) for arg in args if
+                arg.startswith("-I")] + def_inc_dirs
 
     def get_default_include_directories(self, target=None):
         compiler = self.get_compiler(target)
@@ -200,12 +205,12 @@ class CMakeWrapper:
         self.command = "generate"
         self.generator = "Unix Makefiles"
         self.options = {
-            "meson": ("meson", "STRING")
+            "meson": ("meson", "STRING", "Path to meson.")
         }
         self.target = "all"
         self.target_args = []
         self.build_dir = getcwd()
-        self.source_dir = ""
+        self.source_dir = None
 
     def run(self, args):
         self.path = args[0]
@@ -253,7 +258,12 @@ class CMakeWrapper:
         self.meson = MesonNinja(self, self.options["meson"][0])
 
         if not hasattr(self, self.command + "_cmd"):
-            print("Unsupported command: " + self.command)
+            self.help_cmd()
+            return
+
+        if self.source_dir == None:
+            self.help_cmd()
+            return
 
         getattr(self, self.command + "_cmd")()
 
@@ -264,7 +274,7 @@ class CMakeWrapper:
         print("Usage")
         print("")
         print("meson-cmake-wrapper [options] <path-to-source>")
-        print("cmake-cmake-wrapper [options] <path-to-existing-build>")
+        print("meson-cmake-wrapper [options] <path-to-existing-build>")
         print("")
         print("Specify a source directory to (re-)generate a build system for it in the")
         print("current working directory.  Specify an existing build directory to")
@@ -312,15 +322,13 @@ class CMakeWrapper:
             for target in targets:
                 # All directories under the build directory should have a CMakeFiles directory
                 cmakefiles_dir = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles")
-                if not path.exists(cmakefiles_dir):
-                    mkdir(cmakefiles_dir)
+                Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
 
                 # CLion fetches target name from TARGET_NAME.dir directories
                 target_path = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles",
                                         target["name"] + ".dir")
                 target_dir_file.write(target_path + "\n")
-                if not path.exists(target_path):
-                    mkdir(target_path)
+                Path(target_path).mkdir(exist_ok=True)
 
                 # CLion requires that TARGET_PATH/DependInfo.cmake exists
                 with open(path.join(target_path, "DependInfo.cmake"), 'w') as depend_file:
@@ -329,7 +337,7 @@ class CMakeWrapper:
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(path.join(target_path, "build.make"), 'w') as build_file:
                     build_file.write(
-                        path.join(target_path, "build") + ": " + path.join(self.build_dir, target["filename"]))
+                        path.join(target_path, "build") + ": " + path.join(self.meson.build_dir, target["filename"]))
 
                 with open(path.join(target_path, "flags.make"), 'w') as flags_file:
                     compiler = self.meson.get_compiler(target)
@@ -353,6 +361,7 @@ class CMakeWrapper:
 
     def build_cmd(self):
         print("Building target: " + self.target)
+        self.generate_cmd()
         self.meson.build()
 
     def capabilities_cmd(self):
@@ -371,7 +380,6 @@ class CMakeWrapper:
         cmake_server.run(self.command_args)
 
     def gen_cmake_cache(self):
-
         with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
 
             extern_options = dict({
@@ -579,9 +587,11 @@ class CMakeWrapper:
 
         for target in self.meson.get_targets():
             build_target = ETree.SubElement(build, "Target", {"title": target["name"]})
-            ETree.SubElement(build_target, "Option", {"output": path.join(self.build_dir, target["name"])})
-            ETree.SubElement(build_target, "Option", {"working_dir": self.build_dir})
-            ETree.SubElement(build_target, "Option", {"object_output": self.build_dir})
+            output = path.join(self.meson.build_dir, target["filename"])
+            output_dir = path.split(output)[0]
+            ETree.SubElement(build_target, "Option", {"output": output})
+            ETree.SubElement(build_target, "Option", {"working_dir": output_dir})
+            ETree.SubElement(build_target, "Option", {"object_output": path.join(output_dir, target["id"])})
             ty = {
                 "executable": "1",
                 "shared library": "3",
