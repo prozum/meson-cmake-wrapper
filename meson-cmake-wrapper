@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import pickle
 import socket
 import xml.etree.ElementTree as ETree
 from os import mkdir, path, getcwd
@@ -10,14 +11,37 @@ from sys import argv
 
 class Meson:
     """
-    Base class that handles fetching data from Meson.
+    Base class that handles data fetching and setting options for Meson.
     """
 
-    def __init__(self, cmake, meson_path):
+    def __init__(self, cmake, meson_path="meson"):
         self.cmake = cmake
-        self.meson_path = meson_path
+
+        # Use CMake variable 'meson' for custom Meson path
+        if "meson" in cmake.options:
+            self.meson_path = cmake.options["meson"][0]
+        else:
+            self.meson_path = meson_path
+        # Use CMake variable 'cross-file' for setting Meson cross-file
+        if "cross-file" in cmake.options:
+            self.cross_file = cmake.options["cross-file"][0]
+        else:
+            self.cross_file = None
+
         self.build_dir = path.join(cmake.build_dir, "meson-build")
         self.source_dir = cmake.source_dir
+
+        if cmake.build_type == "debug":
+            self.build_type = "debug"
+        elif cmake.build_type == "release":
+            self.build_type = "release"
+        elif cmake.build_type == "relwithdebinfo":
+            self.build_type = "debugoptimized"
+        elif cmake.build_type == "minsizerel":
+            self.build_type = "release"
+
+        # Copy CMake options to Meson
+        # self.set_options(cmake.options)
 
         # Cache
         self.c_targets = None
@@ -141,16 +165,16 @@ class Meson:
         if lang in self.c_default_inc_dirs:
             return self.c_default_inc_dirs[lang]
 
-        output = Popen([compiler, "-x" + lang, '-E', '-v', '-'], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
+        output = Popen([compiler, "-x" + lang, "-E", "-v", "-"], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
         stderr = output.stderr.read().decode()
         start = False
         paths = []
         for line in stderr.split('\n'):
             if not start:
-                if line == '#include <...> search starts here:':
+                if line == "#include <...> search starts here:":
                     start = True
             elif start:
-                if line == 'End of search list.':
+                if line == "End of search list.":
                     break
                 else:
                     paths.append(path.abspath(line[1:]))
@@ -158,19 +182,31 @@ class Meson:
         self.c_default_inc_dirs[lang] = paths
         return self.c_default_inc_dirs[lang]
 
+    def get_options(self):
+        meson_options = []
+
+        if self.cross_file:
+            meson_options + ["--cross-file", self.cross_file]
+
+        for name, value in self.cmake.options.items():
+            print(name, value)
+            meson_options.append("-D" + name + "=" + value[0])
+
+        return meson_options
 
 class MesonNinja(Meson):
     """
     Class that handles interaction with Ninja.
     """
 
-    def __init__(self, cmake, meson_path, ninja_path="ninja"):
+    def __init__(self, cmake, meson_path="meson", ninja_path="ninja"):
         super().__init__(cmake, meson_path)
         self.ninja_path = ninja_path
 
     def setup(self):
         ninja_file = path.join(self.build_dir, "build.ninja")
         if path.exists(ninja_file):
+            Popen([self.meson_path, "configure"] + self.get_options() + [self.build_dir], stdout=PIPE).communicate()[0]
             return True
 
         meson_file = path.join(self.source_dir, "meson.build")
@@ -178,9 +214,12 @@ class MesonNinja(Meson):
             print("No meson.build in source directory!")
             return False
 
-        return call([self.meson_path, "setup", self.source_dir, self.build_dir]) == 0
+        if call([self.meson_path, "setup"] + self.get_options() + [self.source_dir, self.build_dir]) != 0:
+            return False
 
-    def resetup(self):
+        return True
+
+    def reconfigure(self):
         call([self.ninja_path, "-C", self.build_dir, "reconfigure"])
 
     def build(self):
@@ -204,15 +243,34 @@ class CMakeWrapper:
         self.path = ""
         self.command = "generate"
         self.generator = "Unix Makefiles"
-        self.options = {
-            "meson": ("meson", "STRING", "Path to meson.")
-        }
+        self.build_type = "debug"
+        self.options = {}
         self.target = "all"
         self.target_args = []
         self.build_dir = getcwd()
         self.source_dir = None
+        self.meson = None
 
     def run(self, args):
+        self.parse_args(args)
+
+        # Only the ninja backend is currently supported
+        self.meson = MesonNinja(self)
+
+        # Unknown command
+        if not hasattr(self, self.command + "_cmd"):
+            self.help_cmd()
+            return
+
+        # Source dir is not specified
+        if self.source_dir is None:
+            self.help_cmd()
+            return
+
+        # Run command
+        getattr(self, self.command + "_cmd")()
+
+    def parse_args(self, args):
         self.path = args[0]
         i = 1
         while i < len(args):
@@ -243,6 +301,9 @@ class CMakeWrapper:
                 i += 1
                 self.command = args[i]
                 self.command_args = args[i:]
+            elif args[i].startswith("-DCMAKE_BUILD_TYPE"):
+                self.build_type = args[i].split("=")[1].lower()
+
             elif args[i].startswith("-D"):
                 if ":" in args[i]:
                     key, rest = args[i][2:].split(":", 1)
@@ -254,18 +315,6 @@ class CMakeWrapper:
             else:
                 self.source_dir = args[i]
             i += 1
-
-        self.meson = MesonNinja(self, self.options["meson"][0])
-
-        if not hasattr(self, self.command + "_cmd"):
-            self.help_cmd()
-            return
-
-        if self.source_dir == None:
-            self.help_cmd()
-            return
-
-        getattr(self, self.command + "_cmd")()
 
     def version_cmd(self):
         print("cmake version {0}".format(".".join(map(str, self.version))))
@@ -357,11 +406,16 @@ class CMakeWrapper:
         # CLion requires PROJECT_NAME.cbp for IDE integration
         self.gen_codeblocks_project()
 
-        self.meson.resetup()
+    def save_options(self):
+        with open(path.join(self.build_dir, "cmake_options.pkl"), "wb") as output:
+            pickle.dump(self.options, output, pickle.HIGHEST_PROTOCOL)
+
+    def load_options(self):
+        with open(path.join(self.build_dir, "cmake_options.pk1"), "rb") as input:
+            self.options = pickle.load(input)
 
     def build_cmd(self):
         print("Building target: " + self.target)
-        self.generate_cmd()
         self.meson.build()
 
     def capabilities_cmd(self):
@@ -594,6 +648,7 @@ class CMakeWrapper:
             ETree.SubElement(build_target, "Option", {"object_output": path.join(output_dir, target["id"])})
             ty = {
                 "executable": "1",
+                "static library": "2",
                 "shared library": "3",
                 "custom": "4"
             }[target["type"]]
