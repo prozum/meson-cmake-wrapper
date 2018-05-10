@@ -1,0 +1,12 @@
+# Files that CLion read and write (Found using strace)
+/CMakeCache.txt
+/CMakeFiles/CMAKE_VERSION/CMakeCCompiler.cmake
+/CMakeFiles/CMAKE_VERSION/CMakeCXXCompiler.cmake
+/CMakeFiles/Makefile.cmake
+/CMakeFiles/TargetDirectories.txt
+/PROJECT_NAME.cbp
+/TARGET_PATH/CMakeFiles/TARGET_NAME.dir/DependInfo.cmake
+/TARGET_PATH/CMakeFiles/TARGET_NAME.dir/build.make
+/TARGET_PATH/CMakeFiles/TARGET_NAME.dir/flags.make
+/TARGET_PATH/CMakeFiles/TARGET_NAME.dir/link.txt
+/TARGET_PATH/cmake_install.cmake
