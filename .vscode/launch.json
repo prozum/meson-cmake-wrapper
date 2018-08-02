@@ -1,0 +1,94 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "compounds": [
+        {
+            "name": "server and client",
+            "configurations": ["meson-cmake-wrapper", "cmake-client"]
+        }
+    ],
+    "configurations": [
+        {
+            "name": "cmake-client",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-client",
+            "args": [
+                "/tmp/cmake-pipe",
+                "Ninja",
+                "${workspaceFolder}/sample-project/build",
+                "${workspaceFolder}/sample-project"
+            ],
+            "debugStdLib": true
+        },
+        {
+            "name": "cmake-client (no source dir)",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-client",
+            "args": [
+                "/tmp/cmake-pipe",
+                "Ninja",
+                "${workspaceFolder}/sample-project/build",
+            ],
+            "debugStdLib": true
+        },
+        {
+            "name": "meson-cmake-wrapper",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "preLaunchTask": "removepipe",
+            "args": [
+                "-E",
+                "server",
+                "--pipe=/tmp/cmake-pipe",
+                "--experiment"
+            ],
+            "debugStdLib": true
+        },
+        {
+            "name": "meson-cmake-wrapper",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "preLaunchTask": "removepipe",
+            "args": [
+                "-E",
+                "server",
+                "--pipe=/tmp/cmake-pipe",
+                "--experiment"
+            ],
+            "debugStdLib": true
+        },
+        {
+            "name": "meson-cmake-wrapper (codeblocks)",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/sample-project/build",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "args": [
+                "-G",
+                "CodeBlocks - Unix Makefiles",
+                ".."
+            ],
+            "debugStdLib": true
+        },
+        {
+            "name": "meson-cmake-wrapper (build all)",
+            "type": "pythonExperimental",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/sample-project/build",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "args": [
+                "--build", 
+                ".", 
+                "--target", 
+                "all"
+            ],
+            "debugStdLib": true
+        },
+    ]
+}

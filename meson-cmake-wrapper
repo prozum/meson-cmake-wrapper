@@ -2,11 +2,16 @@
 import json
 import pickle
 import socket
+import logging
+import logging.config
 import xml.etree.ElementTree as ETree
 from os import mkdir, path, getcwd
 from pathlib import Path
 from subprocess import call, Popen, PIPE, DEVNULL
-from sys import argv
+from sys import argv, stderr
+
+SERVER_HEADER = b'\n[== "CMake Server" ==[\n'
+SERVER_FOOTER = b'\n]== "CMake Server" ==]\n'
 
 
 class Meson:
@@ -14,34 +19,14 @@ class Meson:
     Base class that handles data fetching and setting options for Meson.
     """
 
-    def __init__(self, cmake, meson_path="meson"):
+    def __init__(self, cmake, path='meson'):
         self.cmake = cmake
-
-        # Use CMake variable 'meson' for custom Meson path
-        if "meson" in cmake.options:
-            self.meson_path = cmake.options["meson"][0]
-        else:
-            self.meson_path = meson_path
-        # Use CMake variable 'cross-file' for setting Meson cross-file
-        if "cross-file" in cmake.options:
-            self.cross_file = cmake.options["cross-file"][0]
-        else:
-            self.cross_file = None
-
-        self.build_dir = path.join(cmake.build_dir, "meson-build")
-        self.source_dir = cmake.source_dir
-
-        if cmake.build_type == "debug":
-            self.build_type = "debug"
-        elif cmake.build_type == "release":
-            self.build_type = "release"
-        elif cmake.build_type == "relwithdebinfo":
-            self.build_type = "debugoptimized"
-        elif cmake.build_type == "minsizerel":
-            self.build_type = "release"
-
-        # Copy CMake options to Meson
-        # self.set_options(cmake.options)
+        self.path = path
+        self.backend = None
+        self.build_dir = None
+        self.source_dir = None
+        self.build_type = None
+        self.cross_file = None
 
         # Cache
         self.c_targets = None
@@ -52,23 +37,49 @@ class Meson:
         self.c_compile_commands_target = {}
         self.c_default_inc_dirs = {}
 
+    def log(self, msg):
+        if isinstance(msg, Exception):
+            self.logger.info(msg, exc_info=msg)
+        else:
+            self.logger.info(msg)
+
+    def call(self, args):
+        child = Popen([self.path] + args, stdout=PIPE)
+        output = child.communicate()[0]
+        if child.returncode != 0:
+            RuntimeError('Meson call failed:', args, output)
+        return output
+
+    def set_backend(self, backend):
+        if backend == 'ninja':
+            self.backend = NinjaBackend(self)
+        else:
+            raise Exception('Backend not supported: ' + backend)
+
+    def setup(self):
+        return self.backend.setup()
+
+    def build(self):
+        return self.backend.build()
+
     def get_targets(self):
         if self.c_targets:
             return self.c_targets
 
-        output = Popen([self.meson_path, "introspect",
-                        "--targets", self.build_dir],
-                       stdout=PIPE).communicate()[0]
+        output = self.call(['introspect', '--targets', self.build_dir])
+        self.log('(targets) "%s"' % output)
+        for it in self.__dict__:
+            self.log('(targets): %s\t%s' % (it, self.__dict__[it]))
         self.c_targets = json.loads(output)
         return self.c_targets
 
     def get_target_files(self, target):
-        id = target["id"]
+        id = target['id']
         if id in self.c_target_files:
             return self.c_target_files[id]
-        output = Popen([self.meson_path, "introspect",
-                        "--target-files", id, self.build_dir],
-                       stdout=PIPE).communicate()[0]
+        output = self.call(['introspect', '--target-files', id, self.build_dir])
+
+        self.log('(target files) "%s"' % output)
         # Workaround https://github.com/mesonbuild/meson/issues/2783
         if output == b'':
             return []
@@ -79,37 +90,34 @@ class Meson:
     def get_buildsystem_files(self):
         if self.c_buildsystem_files:
             return self.c_buildsystem_files
-        output = Popen([self.meson_path, "introspect",
-                        "--buildsystem-files", self.build_dir],
-                       stdout=PIPE).communicate()[0]
+        output = self.call(['introspect', '--buildsystem-files', self.build_dir])
+        self.log('(buildsystem files) "%s"' % output)
         self.c_buildsystem_files = json.loads(output)
         return self.c_buildsystem_files
 
     def get_project_info(self):
         if self.c_project_info:
             return self.c_project_info
-        output = Popen([self.meson_path, "introspect",
-                        "--projectinfo", self.build_dir],
-                       stdout=PIPE).communicate()[0]
+        output = self.call(['introspect', '--projectinfo', self.build_dir])
+        self.log('(project info) "%s"' % output)
         self.c_project_info = json.loads(output)
         return self.c_project_info
 
     def get_compile_commands(self, target):
-        id = target["id"]
+        id = target['id']
         if id in self.c_compile_commands_target:
             return self.c_compile_commands_target[id]
 
         if not self.c_compile_commands:
-            json_data = open(path.join(self.build_dir, "compile_commands.json")).read()
+            json_data = open(path.join(self.build_dir, 'compile_commands.json')).read()
             self.c_compile_commands = json.loads(json_data)
 
         # Only way to identify target compiler commands from compile_commands.json
         # is by using a file from the wanted target
         if len(self.get_target_files(target)) == 0:
             return []
-        target_file = path.relpath(path.join(self.source_dir, self.get_target_files(target)[0]))
-        self.c_compile_commands_target[id] = next(
-            (cmd for cmd in self.c_compile_commands if cmd["file"] == target_file), None)
+        target_file = path.relpath(path.join(self.source_dir, self.get_target_files(target)[0]), self.build_dir)
+        self.c_compile_commands_target[id] = next((cmd for cmd in self.c_compile_commands if cmd['file'] == target_file), None)
         return self.c_compile_commands_target[id]
 
     def get_compiler(self, target=None):
@@ -120,23 +128,23 @@ class Meson:
         if not compile_commands:
             return None
 
-        return compile_commands["command"].split()[0]
+        return compile_commands['command'].split()[0]
 
     def get_flags(self, target):
         compile_commands = self.get_compile_commands(target)
         if not compile_commands:
             return []
 
-        args = compile_commands["command"].split()[1:]
-        return [arg for arg in args if not arg.startswith(("-D", "-I"))]
+        args = compile_commands['command'].split()[1:]
+        return [arg for arg in args if not arg.startswith(('-D', '-I'))]
 
     def get_defines(self, target):
         compile_commands = self.get_compile_commands(target)
         if not compile_commands:
             return []
 
-        args = compile_commands["command"].split()
-        return [arg for arg in args if arg.startswith("-D")]
+        args = compile_commands['command'].split()
+        return [arg for arg in args if arg.startswith('-D')]
 
     def get_include_directories(self, target=None, def_inc=True):
         if not target:
@@ -150,31 +158,31 @@ class Meson:
             def_inc_dirs = self.get_default_include_directories(target)
         else:
             def_inc_dirs = []
-        args = compile_commands["command"].split()
+        args = compile_commands['command'].split()
         return [path.abspath(path.join(self.build_dir, arg[2:])) for arg in args if
-                arg.startswith("-I")] + def_inc_dirs
+                arg.startswith('-I')] + def_inc_dirs
 
     def get_default_include_directories(self, target=None):
         compiler = self.get_compiler(target)
 
-        if compiler.endswith("++"):
-            lang = "c++"
+        if compiler.endswith('++'):
+            lang = 'c++'
         else:
-            lang = "c"
+            lang = 'c'
 
         if lang in self.c_default_inc_dirs:
             return self.c_default_inc_dirs[lang]
 
-        output = Popen([compiler, "-x" + lang, "-E", "-v", "-"], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
+        output = Popen([compiler, '-x' + lang, '-E', '-v', '-'], stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
         stderr = output.stderr.read().decode()
         start = False
         paths = []
         for line in stderr.split('\n'):
             if not start:
-                if line == "#include <...> search starts here:":
+                if line == '#include <...> search starts here:':
                     start = True
             elif start:
-                if line == "End of search list.":
+                if line == 'End of search list.':
                     break
                 else:
                     paths.append(path.abspath(line[1:]))
@@ -186,49 +194,47 @@ class Meson:
         meson_options = []
 
         if self.cross_file:
-            meson_options + ["--cross-file", self.cross_file]
-
-        for name, value in self.cmake.options.items():
-            print(name, value)
-            meson_options.append("-D" + name + "=" + value[0])
+            meson_options + ['--cross-file', self.cross_file]
 
         return meson_options
 
-class MesonNinja(Meson):
+
+class NinjaBackend:
     """
     Class that handles interaction with Ninja.
     """
 
-    def __init__(self, cmake, meson_path="meson", ninja_path="ninja"):
-        super().__init__(cmake, meson_path)
-        self.ninja_path = ninja_path
+    def __init__(self, meson, path='ninja'):
+        self.meson = meson
+        self.cmake = meson.cmake
+        self.path = path
 
     def setup(self):
-        ninja_file = path.join(self.build_dir, "build.ninja")
+        ninja_file = path.join(self.meson.build_dir, 'build.ninja')
         if path.exists(ninja_file):
-            Popen([self.meson_path, "configure"] + self.get_options() + [self.build_dir], stdout=PIPE).communicate()[0]
+            self.meson.call(['configure'] + self.meson.get_options() + [self.meson.build_dir])
             return True
 
-        meson_file = path.join(self.source_dir, "meson.build")
+        meson_file = path.join(self.meson.source_dir, 'meson.build')
         if not path.exists(meson_file):
-            print("No meson.build in source directory!")
+            print('No meson.build in source directory!')
             return False
 
-        if call([self.meson_path, "setup"] + self.get_options() + [self.source_dir, self.build_dir]) != 0:
+        if call([self.meson.path, 'setup'] + self.meson.get_options() + [self.meson.source_dir, self.meson.build_dir]) != 0:
             return False
 
         return True
 
     def reconfigure(self):
-        call([self.ninja_path, "-C", self.build_dir, "reconfigure"])
+        call([self.path, '-C', self.meson.build_dir, 'reconfigure'])
 
     def build(self):
-        call([self.ninja_path, "-C", self.build_dir, self.get_ninja_target(self.cmake.target)])
+        call([self.path, '-C', self.meson.build_dir, self.get_target(self.cmake.target)])
 
-    def get_ninja_target(self, target_name):
-        target = next((t for t in self.get_targets() if t["name"] == target_name), None)
+    def get_target(self, target_name):
+        target = next((t for t in self.meson.get_targets() if t['name'] == target_name), None)
         if target:
-            return target["filename"]
+            return target['filename']
 
         return target_name
 
@@ -240,456 +246,428 @@ class CMakeWrapper:
 
     def __init__(self):
         self.version = [3, 10, 0]
-        self.path = ""
-        self.command = "generate"
-        self.generator = "Unix Makefiles"
-        self.build_type = "debug"
-        self.options = {}
-        self.target = "all"
+        self.path = argv[0]
+        self.command = 'generate'
+        self.generator = None
+        self.build_type = None
+        self.cache_entries = {}
+        self.target = 'all'
         self.target_args = []
-        self.build_dir = getcwd()
+        self.build_dir = None
         self.source_dir = None
-        self.meson = None
+        self.meson = Meson(self)
+        self.server = CMakeWrapperServer(self)
+        self.logger = None
 
     def run(self, args):
         self.parse_args(args)
 
-        # Only the ninja backend is currently supported
-        self.meson = MesonNinja(self)
+        self.log('argv:\t%s' % argv)
+        self.log('cwd:\t%s' % getcwd())
+        self.log('build_dir:\t%s' % self.build_dir)
+        self.log('source_dir:\t%s' % self.source_dir)
 
         # Unknown command
-        if not hasattr(self, self.command + "_cmd"):
-            self.help_cmd()
-            return
-
-        # Source dir is not specified
-        if self.source_dir is None:
+        if not hasattr(self, self.command + '_cmd'):
             self.help_cmd()
             return
 
         # Run command
-        getattr(self, self.command + "_cmd")()
+        try:
+            getattr(self, self.command + '_cmd')()
+        except Exception as e:
+            self.log(e)
+            raise e
+        finally:
+            self.save_cache_entries()
 
     def parse_args(self, args):
-        self.path = args[0]
         i = 1
         while i < len(args):
-            if args[i] == "-version" or args[i] == "--version":
-                self.command = "version"
-            if args[i] == "-help" or args[i] == "--help":
-                self.command = "help"
-            elif args[i] == "-G":
-                self.command = "generate"
+            if args[i] == '-version' or args[i] == '--version':
+                self.command = 'version'
+            if args[i] == '-help' or args[i] == '--help':
+                self.command = 'help'
+            elif args[i] == '-G':
+                self.command = 'generate'
                 i += 1
-                self.generator = args[i]
-            elif args[i].startswith("-G"):
-                self.command = "generate"
-                self.generator = args[i][2:]
-            elif args[i] == "--build":
-                self.command = "build"
+                self.set_generator(args[i])
+            elif args[i].startswith('-G'):
+                self.command = 'generate'
+                self.set_generator(args[i][2:])
+            elif args[i] == '--build':
+                self.command = 'build'
                 i += 1
-                self.source_dir = args[i]
-            elif args[i] == "--target":
+                self.set_build_dir(args[i])
+            elif args[i] == '--target':
                 i += 1
                 self.target = args[i]
-            elif args[i] == "--":
+            elif args[i] == '--config':
+                i += 1
+                self.set_build_type(args[i])
+            elif args[i] == '--':
                 i += 1
                 while i < len(args):
                     self.target_args.append(args[i])
                     i += 1
-            elif args[i] == "-E":
+            elif args[i] == '-E':
                 i += 1
                 self.command = args[i]
                 self.command_args = args[i:]
-            elif args[i].startswith("-DCMAKE_BUILD_TYPE"):
-                self.build_type = args[i].split("=")[1].lower()
-
-            elif args[i].startswith("-D"):
-                if ":" in args[i]:
-                    key, rest = args[i][2:].split(":", 1)
-                    ty, val = rest.split("=", 1)
-                else:
-                    key, val = args[i][2:].split("=", 1)
-                    ty = "STRING"
-                self.options[key.lower()] = (val, ty, "")
+                break
+            elif args[i].startswith('-D'):
+                self.parse_cache_entry(args[i])
             else:
-                self.source_dir = args[i]
+                self.set_source_dir(args[i])
             i += 1
 
+        if not self.generator:
+            self.set_generator('Unix Makefiles')
+        if not self.build_dir:
+            self.set_build_dir(getcwd())
+
+    def init_logging(self):
+        # Setup loggers
+        loggers = []
+        self.logger = logging.getLogger('CMake Wrapper')
+        loggers.append(self.logger)
+        self.meson.logger = logging.getLogger('Meson')
+        loggers.append(self.meson.logger)
+        self.server.logger = logging.getLogger('Server')
+        loggers.append(self.server.logger)
+
+        # Cleanup if reinitialized
+        for logger in loggers:
+            logger.handlers = []
+
+        # Setup handlers
+        handlers = []
+        handler = logging.FileHandler(path.join(self.build_dir, 'meson-cmake-wrapper.log'))
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s: %(message)s')
+        handler.setFormatter(formatter)
+        handlers.append(handler)
+
+        handler = logging.StreamHandler(stderr)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(name)s: %(message)s')
+        handler.setFormatter(formatter)
+        handlers.append(handler)
+
+        handler = ServerLogHandler(self.server)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(name)s: %(message)s')
+        handler.setFormatter(formatter)
+        handlers.append(handler)
+
+        for logger in loggers:
+            logger.setLevel(logging.INFO)
+            for handler in handlers:
+                logger.addHandler(handler)
+
+    def log(self, msg):
+        if isinstance(msg, Exception):
+            self.logger.info(msg, exc_info=msg)
+        else:
+            self.logger.info(msg)
+
+    def set_generator(self, generator):
+        if generator == 'Ninja':
+            self.meson.set_backend('ninja')
+        elif generator == 'Unix Makefiles':
+            self.meson.set_backend('ninja')
+        elif generator == 'CodeBlocks - Unix Makefiles':
+            self.meson.set_backend('ninja')
+        else:
+            raise Exception('Generator not supported: ' + generator)
+        self.generator = generator
+
+    def set_source_dir(self, source_dir):
+        self.source_dir = path.abspath(source_dir)
+        self.meson.source_dir = self.source_dir
+
+    def set_build_dir(self, build_dir):
+        self.build_dir = path.abspath(build_dir)
+        self.meson.build_dir = path.join(self.build_dir)
+        self.init_logging()
+
+    def set_build_type(self, build_type):
+        build_type = build_type.upper()
+        if build_type in ('DEBUG', ''):
+            self.meson.build_type = 'debug'
+        elif build_type == 'RELEASE':
+            self.meson.build_type = 'release'
+        elif build_type == 'RELWITHDEBINFO':
+            self.meson.build_type = 'debugoptimized'
+        elif build_type == 'MINSIZEREL':
+            self.meson.build_type = 'minsize'
+        else:
+            self.meson.build_type = 'plain'
+        self.build_type = build_type
+
+    def init_cache_entries(self):
+        if not self.source_dir:
+            raise Exception('Source dir not provided')
+        self.meson.setup()
+
+        cache_entries = {
+            'CMAKE_EXPORT_COMPILE_COMMANDS': ('YES', 'BOOL'),
+            'CMAKE_INSTALL_PREFIX': ('/usr/local', 'PATH'),
+            'CMAKE_PROJECT_NAME': (self.meson.get_project_info()['name'], 'STATIC'),
+            '%s_BINARY_DIR' % self.meson.get_project_info()['name']: (self.build_dir, 'STATIC'),
+            '%s_SOURCE_DIR' % self.meson.get_project_info()['name']: (self.source_dir, 'STATIC'),
+            'CMAKE_CACHEFILE_DIR': (self.build_dir, 'INTERNAL'),
+            'CMAKE_CACHE_MAJOR_VERSION': (str(self.version[0]), 'INTERNAL'),
+            'CMAKE_CACHE_MINOR_VERSION': (str(self.version[1]), 'INTERNAL'),
+            'CMAKE_CACHE_PATCH_VERSION': (str(self.version[2]), 'INTERNAL'),
+            'CMAKE_COMMAND': (argv[0], 'INTERNAL'),
+            'CMAKE_GENERATOR': (self.generator, 'INTERNAL'),
+            'CMAKE_HOME_DIRECTORY': (self.source_dir, 'INTERNAL'),
+            'CMAKE_ROOT': (path.dirname(self.path), 'INTERNAL'),
+        }
+
+        for key, val in self.cache_entries.items():
+            cache_entries[key] = val
+        self.cache_entries = cache_entries
+
+    def parse_cache_entry(self, entry):
+        if ':' in entry:
+            key, rest = entry[2:].split(':', 1)
+            ty, val = rest.split('=', 1)
+        else:
+            key, val = entry[2:].split('=', 1)
+            ty = 'STRING'
+        self.cache_entries[key] = (val, ty, '')
+
+    def update_cache_entry(self, key, val):
+        if key == 'CMAKE_BUILD_TYPE':
+            self.set_build_type(val)
+        elif key == 'CMAKE_HOME_DIRECTORY':
+            self.set_source_dir(val)
+        # Use CMake variable 'MESON' for custom Meson path
+        elif key == 'MESON':
+            self.meson.path = val
+        # Use CMake variable 'CROSS_FILE' for setting Meson cross-file
+        elif key == 'CROSS_FILE':
+            self.meson.cross_file = val
+
+    def update_cache_entries(self):
+        for key, val in self.cache_entries.items():
+            self.update_cache_entry(key, val)
+
+    def save_cache_entries(self):
+        cache_file = path.join(self.build_dir, 'cache_entries.pk1')
+        with open(cache_file, 'wb') as output:
+            pickle.dump(self.cache_entries, output, pickle.HIGHEST_PROTOCOL)
+
+    def load_cache_entries(self):
+        cache_file = path.join(self.build_dir, 'cache_entries.pk1')
+        if not path.exists(cache_file):
+            self.init_cache_entries()
+            return
+        with open(cache_file, 'rb') as input:
+            self.cache_entries = pickle.load(input)
+
     def version_cmd(self):
-        print("cmake version {0}".format(".".join(map(str, self.version))))
+        print('cmake version {0}'.format('.'.join(map(str, self.version))))
 
     def help_cmd(self):
-        print("Usage")
-        print("")
-        print("meson-cmake-wrapper [options] <path-to-source>")
-        print("meson-cmake-wrapper [options] <path-to-existing-build>")
-        print("")
-        print("Specify a source directory to (re-)generate a build system for it in the")
-        print("current working directory.  Specify an existing build directory to")
-        print("re-generate its build system.")
-        print("")
-        print("Options")
-        print("  -C <initial-cache>           = Pre-load a script to populate the cache.")
-        print("  -D <var>[:<type>]=<value>    = Create a cmake cache entry.")
-        print("  -G <generator-name>          = Specify a build system generator.")
-        print("  -E                           = CMake command mode.")
-        print("")
-        print("  --build <dir>                = Build a CMake-generated project binary tree.")
-        print("  --version,-version,/V [<f>]  = Print version number and exit.")
-        print("")
-        print("Generators")
-        print("")
-        print("The following generators are available on this platform:")
-        print("  Unix Makefiles               = Generates standard UNIX makefiles.")
-        print("  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.")
+        print('Usage')
+        print('')
+        print('meson-cmake-wrapper [options] <path-to-source>')
+        print('meson-cmake-wrapper [options] <path-to-existing-build>')
+        print('')
+        print('Specify a source directory to (re-)generate a build system for it in the')
+        print('current working directory.  Specify an existing build directory to')
+        print('re-generate its build system.')
+        print('')
+        print('Options')
+        print('  -C <initial-cache>           = Pre-load a script to populate the cache.')
+        print('  -D <var>[:<type>]=<value>    = Create a cmake cache entry.')
+        print('  -G <generator-name>          = Specify a build system generator.')
+        print('  -E                           = CMake command mode.')
+        print('')
+        print('  --build <dir>                = Build a CMake-generated project binary tree.')
+        print('  --version,-version,/V [<f>]  = Print version number and exit.')
+        print('')
+        print('Generators')
+        print('')
+        print('The following generators are available on this platform:')
+        print('  Unix Makefiles               = Generates standard UNIX makefiles.')
+        print('  Ninja                        = Generates build.ninja files.')
+        print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.')
 
     def generate_cmd(self):
-        print("Generate to build directory: " + self.build_dir)
+        print('Generate to build directory: ' + self.build_dir)
 
         # Make sure meson is setup
         if not self.meson.setup():
             return
 
-        # Make sure build directory exists
-        if not path.exists(self.build_dir):
-            mkdir(self.build_dir)
-
-        # CLion requires a CMakeFiles directory at root of build directory
-        root_cmakefiles_dir = path.join(self.build_dir, "CMakeFiles")
-        if not path.exists(root_cmakefiles_dir):
-            mkdir(root_cmakefiles_dir)
-
-        # CLion requires that Makefile.cmake exists
-        with open(path.join(root_cmakefiles_dir, "Makefile.cmake"), "w") as file:
-            file.write("")
-
-        # CLion fetches target directories from TargetDirectories.txt
-        with open(path.join(root_cmakefiles_dir, "TargetDirectories.txt"), "w") as target_dir_file:
-            targets = self.meson.get_targets()
-
-            for target in targets:
-                # All directories under the build directory should have a CMakeFiles directory
-                cmakefiles_dir = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles")
-                Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
-
-                # CLion fetches target name from TARGET_NAME.dir directories
-                target_path = path.join(self.build_dir, path.split(target["filename"])[0], "CMakeFiles",
-                                        target["name"] + ".dir")
-                target_dir_file.write(target_path + "\n")
-                Path(target_path).mkdir(exist_ok=True)
-
-                # CLion requires that TARGET_PATH/DependInfo.cmake exists
-                with open(path.join(target_path, "DependInfo.cmake"), 'w') as depend_file:
-                    depend_file.write("")
-
-                # CLion fetches target name from TARGET_PATH/build.make
-                with open(path.join(target_path, "build.make"), 'w') as build_file:
-                    build_file.write(
-                        path.join(target_path, "build") + ": " + path.join(self.meson.build_dir, target["filename"]))
-
-                with open(path.join(target_path, "flags.make"), 'w') as flags_file:
-                    compiler = self.meson.get_compiler(target)
-                    if compiler:
-                        if compiler.endswith("++"):
-                            prefix = "CXX"
-                        else:
-                            prefix = "CC"
-                        flags_file.write(prefix + "_FLAGS = " + " ".join(self.meson.get_flags(target)) + "\n")
-                        flags_file.write(prefix + "_DEFINES = " + " ".join(self.meson.get_defines(target)) + "\n")
-                        flags_file.write(prefix + "_INCLUDES = " + " ".join(
-                            ["-I" + inc_dir for inc_dir in self.meson.get_include_directories(target, False)]) + "\n")
-
-        # CLion requires CMakeCache.txt
+        # Create CMakeCache.txt
         self.gen_cmake_cache()
 
-        # CLion requires PROJECT_NAME.cbp for IDE integration
-        self.gen_codeblocks_project()
+        if self.generator.endswith('Unix Makefiles'):
+            self.gen_make_project()
 
-    def save_options(self):
-        with open(path.join(self.build_dir, "cmake_options.pkl"), "wb") as output:
-            pickle.dump(self.options, output, pickle.HIGHEST_PROTOCOL)
-
-    def load_options(self):
-        with open(path.join(self.build_dir, "cmake_options.pk1"), "rb") as input:
-            self.options = pickle.load(input)
+        if self.generator.startswith('CodeBlocks'):
+            self.gen_codeblocks_project()
 
     def build_cmd(self):
-        print("Building target: " + self.target)
+        print('Building target: ' + self.target)
         self.meson.build()
 
     def capabilities_cmd(self):
-        data = {"generators": [
-            {"extraGenerators": ["CodeBlocks"],
-             "name": "Unix Makefiles", "platformSupport": False, "toolsetSupport": False},
-            {"extraGenerators": ["CodeBlocks"], "name": "Ninja",
-             "platformSupport": False, "toolsetSupport": False}], "serverMode": False,
-            "version": {"isDirty": False, "major": self.version[0], "minor": self.version[1], "patch": self.version[2],
-                        "string": ".".join(map(str, self.version)), "suffix": ""}}
+        data = {'generators': [
+            {'extraGenerators': ['CodeBlocks'],
+             'name': 'Unix Makefiles', 'platformSupport': False, 'toolsetSupport': False},
+            {'extraGenerators': ['CodeBlocks'], 'name': 'Ninja',
+             'platformSupport': False, 'toolsetSupport': False}], 'serverMode': False,
+            'version': {'isDirty': False, 'major': self.version[0], 'minor': self.version[1], 'patch': self.version[2],
+                        'string': '.'.join(map(str, self.version)), 'suffix': ''}}
         print(json.dumps(data))
 
     def server_cmd(self):
-        cmake_server = CMakeWrapperServer(self)
-
-        cmake_server.run(self.command_args)
+        self.server.run(self.command_args)
 
     def gen_cmake_cache(self):
-        with open(path.join(self.build_dir, "CMakeCache.txt"), "w") as file:
-
-            extern_options = dict({
-                ('cmake_ar', ('/usr/bin/ar', 'FILEPATH', 'Path to a program.')),
-                ('cmake_color_makefile', ('ON', 'BOOL', 'Enable/Disable color output during build.')),
-                ('cmake_cxx_compiler', ('/usr/bin/c++', 'FILEPATH', 'CXX compiler')),
-                ('cmake_cxx_compiler_ar', ('/usr/bin/gcc-ar', 'FILEPATH',
-                                           "A wrapper around 'ar' adding the appropriate '--plugin' option for the GCC compiler")),
-                ('cmake_cxx_compiler_ranlib', ('/usr/bin/gcc-ranlib', 'FILEPATH',
-                                               "A wrapper around 'ranlib' adding the appropriate '--plugin' option for the GCC compiler")),
-                ('cmake_cxx_flags_debug', ('-g', 'STRING', 'Flags used by the compiler during debug builds.')),
-                ('cmake_cxx_flags_minsizerel',
-                 ('-Os -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds for minimum size.')),
-                ('cmake_cxx_flags_release',
-                 ('-O2 -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds.')),
-                ('cmake_cxx_flags_relwithdebinfo',
-                 ('-O2 -g -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds with debug info.')),
-                ('cmake_c_compiler', ('/usr/bin/cc', 'FILEPATH', 'C compiler')),
-                ('cmake_c_compiler_ar', ('/usr/bin/gcc-ar', 'FILEPATH',
-                                         "A wrapper around 'ar' adding the appropriate '--plugin' option for the GCC compiler")),
-                ('cmake_c_compiler_ranlib', ('/usr/bin/gcc-ranlib', 'FILEPATH',
-                                             "A wrapper around 'ranlib' adding the appropriate '--plugin' option for the GCC compiler")),
-                ('cmake_c_flags_debug', ('-g', 'STRING', 'Flags used by the compiler during debug builds.')),
-                ('cmake_c_flags_minsizerel',
-                 ('-Os -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds for minimum size.')),
-                ('cmake_c_flags_release',
-                 ('-O2 -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds.')),
-                ('cmake_c_flags_relwithdebinfo',
-                 ('-O2 -g -DNDEBUG', 'STRING', 'Flags used by the compiler during release builds with debug info.')),
-                ('cmake_export_compile_commands',
-                 ('OFF', 'BOOL', 'Enable/Disable output of compile commands during generation.')),
-                ('cmake_install_prefix',
-                 ('/usr/local', 'PATH', 'Install path prefix, prepended onto install directories.')),
-                ('cmake_linker', ('/usr/bin/ld', 'FILEPATH', 'Path to a program.')),
-                ('cmake_make_program', ('/usr/bin/gmake', 'FILEPATH', 'Path to a program.')),
-                ('cmake_nm', ('/usr/bin/nm', 'FILEPATH', 'Path to a program.')),
-                ('cmake_objcopy', ('/usr/bin/objcopy', 'FILEPATH', 'Path to a program.')),
-                ('cmake_objdump', ('/usr/bin/objdump', 'FILEPATH', 'Path to a program.')),
-                ('cmake_project_name', (self.meson.get_project_info()["name"], 'STATIC', 'Value Computed by CMake')),
-                ('cmake_ranlib', ('/usr/bin/ranlib', 'FILEPATH', 'Path to a program.')),
-                ('cmake_skip_install_rpath', ('NO', 'BOOL',
-                                              'If set, runtime paths are not added when installing shared libraries, but are added when building.')),
-                (
-                    'cmake_skip_rpath',
-                    ('NO', 'BOOL', 'If set, runtime paths are not added when using shared libraries.')),
-                ('cmake_strip', ('/usr/bin/strip', 'FILEPATH', 'Path to a program.')),
-                ('cmake_verbose_makefile', ('FALSE', 'BOOL',
-                                            'If this value is on, makefiles will be generated without the .SILENT directive, and all commands will be echoed to the console during the make.  This is useful for debugging only. With Visual Studio IDE projects all commands are done without /nologo.')),
-                (self.meson.get_project_info()["name"] + '_binary_dir',
-                 (self.build_dir, 'STATIC', 'Value Computed by CMake')),
-                (self.meson.get_project_info()["name"] + '_source_dir',
-                 (self.source_dir, 'STATIC', 'Value Computed by CMake')),
-            })
-
-            intern_options = dict({
-                ('cmake_ar-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_AR')),
-                ('cmake_cachefile_dir',
-                 (self.build_dir, 'INTERNAL', 'This is the directory where this CMakeCache.txt was created')),
-                ('cmake_cache_major_version',
-                 (str(self.version[0]), 'INTERNAL', 'Major version of cmake used to create the current loaded cache')),
-                ('cmake_cache_minor_version',
-                 (str(self.version[1]), 'INTERNAL', 'Minor version of cmake used to create the current loaded cache')),
-                ('cmake_cache_patch_version',
-                 (str(self.version[2]), 'INTERNAL', 'Patch version of cmake used to create the current loaded cache')),
-                ('cmake_color_makefile-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_COLOR_MAKEFILE')),
-                ('cmake_command', ('/usr/bin/cmake', 'INTERNAL', 'Path to CMake executable.')),
-                ('cmake_cpack_command', ('/usr/bin/cpack', 'INTERNAL', 'Path to cpack program executable.')),
-                ('cmake_ctest_command', ('/usr/bin/ctest', 'INTERNAL', 'Path to ctest program executable.')),
-                (
-                    'cmake_cxx_compiler-advanced',
-                    ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_COMPILER')),
-                ('cmake_cxx_compiler_ar-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_COMPILER_AR')),
-                ('cmake_cxx_compiler_ranlib-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_COMPILER_RANLIB')),
-                ('cmake_cxx_flags-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_FLAGS')),
-                ('cmake_cxx_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_FLAGS_DEBUG')),
-                ('cmake_cxx_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_FLAGS_MINSIZEREL')),
-                ('cmake_cxx_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_FLAGS_RELEASE')),
-                ('cmake_cxx_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_CXX_FLAGS_RELWITHDEBINFO')),
-                ('cmake_c_compiler-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_COMPILER')),
-                ('cmake_c_compiler_ar-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_COMPILER_AR')),
-                ('cmake_c_compiler_ranlib-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_COMPILER_RANLIB')),
-                ('cmake_c_flags-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_FLAGS')),
-                ('cmake_c_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_FLAGS_DEBUG')),
-                ('cmake_c_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_FLAGS_MINSIZEREL')),
-                ('cmake_c_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_FLAGS_RELEASE')),
-                ('cmake_c_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_C_FLAGS_RELWITHDEBINFO')),
-                ('cmake_edit_command', ('/usr/bin/ccmake', 'INTERNAL', 'Path to cache edit program executable.')),
-                ('cmake_executable_format', ('ELF', 'INTERNAL', 'Executable file format')),
-                ('cmake_exe_linker_flags-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS')),
-                ('cmake_exe_linker_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS_DEBUG')),
-                ('cmake_exe_linker_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS_MINSIZEREL')),
-                ('cmake_exe_linker_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS_RELEASE')),
-                ('cmake_exe_linker_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO')),
-                ('cmake_export_compile_commands-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_EXPORT_COMPILE_COMMANDS')),
-                ('cmake_generator', ('Unix Makefiles', 'INTERNAL', 'Name of generator.')),
-                ('cmake_home_directory', (self.source_dir, 'INTERNAL',
-                                          'Source directory with the top level CMakeLists.txt file for this project')),
-                ('cmake_install_so_no_exe', ('0', 'INTERNAL', 'Install .so files without execute permission.')),
-                ('cmake_linker-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_LINKER')),
-                (
-                    'cmake_make_program-advanced',
-                    ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MAKE_PROGRAM')),
-                ('cmake_module_linker_flags-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS')),
-                ('cmake_module_linker_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_DEBUG')),
-                ('cmake_module_linker_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_MINSIZEREL')),
-                ('cmake_module_linker_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_RELEASE')),
-                ('cmake_module_linker_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO')),
-                ('cmake_nm-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_NM')),
-                ('cmake_number_of_makefiles', ('1', 'INTERNAL', 'number of local generators')),
-                ('cmake_objcopy-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_OBJCOPY')),
-                ('cmake_objdump-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_OBJDUMP')),
-                ('cmake_platform_info_initialized', ('1', 'INTERNAL', 'Platform information initialized')),
-                ('cmake_ranlib-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_RANLIB')),
-                ('cmake_root', (self.path, 'INTERNAL', 'Path to CMake installation.')),
-                ('cmake_shared_linker_flags-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS')),
-                ('cmake_shared_linker_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS_DEBUG')),
-                ('cmake_shared_linker_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS_MINSIZEREL')),
-                ('cmake_shared_linker_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS_RELEASE')),
-                ('cmake_shared_linker_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO')),
-                ('cmake_skip_install_rpath-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SKIP_INSTALL_RPATH')),
-                ('cmake_skip_rpath-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_SKIP_RPATH')),
-                ('cmake_static_linker_flags-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STATIC_LINKER_FLAGS')),
-                ('cmake_static_linker_flags_debug-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STATIC_LINKER_FLAGS_DEBUG')),
-                ('cmake_static_linker_flags_minsizerel-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STATIC_LINKER_FLAGS_MINSIZEREL')),
-                ('cmake_static_linker_flags_release-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STATIC_LINKER_FLAGS_RELEASE')),
-                ('cmake_static_linker_flags_relwithdebinfo-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STATIC_LINKER_FLAGS_RELWITHDEBINFO')),
-                ('cmake_strip-advanced', ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_STRIP')),
-                ('cmake_uname', ('/usr/bin/uname', 'INTERNAL', 'uname command')),
-                ('cmake_verbose_makefile-advanced',
-                 ('1', 'INTERNAL', 'ADVANCED property for variable: CMAKE_VERBOSE_MAKEFILE')),
-            })
-
-            file.write("# Generated by meson-cmake-wrapper\n")
-
-            file.write("\n########################\n")
-            file.write("# EXTERNAL cache entries\n")
-            file.write("########################\n\n")
-            for opt in extern_options.items():
-                if opt[1][2] != '':
-                    file.write("// " + opt[1][2] + "\n")
-                file.write(opt[0] + ":" + opt[1][1] + "=" + opt[1][0] + "\n")
-
-            file.write("\n########################\n")
-            file.write("# INTERNAL cache entries\n")
-            file.write("########################\n\n")
-            for opt in intern_options.items():
-                if opt[1][2] != '':
-                    file.write("// " + opt[1][2] + "\n")
-                file.write(opt[0] + ":" + opt[1][1] + "=" + opt[1][0] + "\n")
-
-            file.write("\n########################\n")
-            file.write("# USER cache entries\n")
-            file.write("########################\n\n")
-            for opt in self.options.items():
-                if opt[1][2] != '':
-                    file.write("// " + opt[1][2] + "\n")
-                file.write(opt[0] + ":" + opt[1][1] + "=" + opt[1][0] + "\n")
+        self.log('generating cmake cache')
+        with open(path.join(self.build_dir, 'CMakeCache.txt'), 'w') as file:
+            file.write('# Generated by meson-cmake-wrapper\n\n')
+            file.write('########################\n')
+            file.write('# Cache entries\n')
+            file.write('########################\n\n')
+            for entry in self.cache_entries.items():
+                file.write('%s:%s=%s\n' % (entry[0], entry[1][1], entry[1][0]))
 
     def gen_codeblocks_project(self):
-        root = ETree.Element("CodeBlocks_project_file")
+        root = ETree.Element('CodeBlocks_project_file')
         tree = ETree.ElementTree(root)
-        ETree.SubElement(root, "FileVersion", {"major": "1", "minor": "6"})
-        project = ETree.SubElement(root, "Project")
-        ETree.SubElement(project, "Option", {"title": self.meson.get_project_info()["name"]})
-        ETree.SubElement(project, "Option", {"makefile_is_custom": "1"})
-        ETree.SubElement(project, "Option", {"compiler": "gcc"})
-        ETree.SubElement(project, "Option", {"virtualFolders": "Meson Files"})
+        ETree.SubElement(root, 'FileVersion', {'major': '1', 'minor': '6'})
+        project = ETree.SubElement(root, 'Project')
+        ETree.SubElement(project, 'Option', {'title': self.meson.get_project_info()['name']})
+        ETree.SubElement(project, 'Option', {'makefile_is_custom': '1'})
+        ETree.SubElement(project, 'Option', {'compiler': 'gcc'})
+        ETree.SubElement(project, 'Option', {'virtualFolders': 'Meson Files'})
 
-        build = ETree.SubElement(project, "Build")
+        build = ETree.SubElement(project, 'Build')
 
         for target in self.meson.get_targets():
-            build_target = ETree.SubElement(build, "Target", {"title": target["name"]})
-            output = path.join(self.meson.build_dir, target["filename"])
+            build_target = ETree.SubElement(build, 'Target', {'title': target['name']})
+            output = path.join(self.meson.build_dir, target['filename'])
             output_dir = path.split(output)[0]
-            ETree.SubElement(build_target, "Option", {"output": output})
-            ETree.SubElement(build_target, "Option", {"working_dir": output_dir})
-            ETree.SubElement(build_target, "Option", {"object_output": path.join(output_dir, target["id"])})
+            ETree.SubElement(build_target, 'Option', {'output': output})
+            ETree.SubElement(build_target, 'Option', {'working_dir': output_dir})
+            ETree.SubElement(build_target, 'Option', {'object_output': path.join(output_dir, target['id'])})
             ty = {
-                "executable": "1",
-                "static library": "2",
-                "shared library": "3",
-                "custom": "4"
-            }[target["type"]]
-            ETree.SubElement(build_target, "Option", {"type": ty})
+                'executable': '1',
+                'static library': '2',
+                'shared library': '3',
+                'custom': '4'
+            }[target['type']]
+            ETree.SubElement(build_target, 'Option', {'type': ty})
 
             compiler = self.meson.get_compiler(target)
             if compiler:
-                ETree.SubElement(build_target, "Option", {"compiler": "gcc"})
+                ETree.SubElement(build_target, 'Option', {'compiler': 'gcc'})
 
-            compiler = ETree.SubElement(build_target, "Compiler")
+            compiler = ETree.SubElement(build_target, 'Compiler')
             for define in self.meson.get_defines(target):
-                ETree.SubElement(compiler, "Add", {"option": define})
+                ETree.SubElement(compiler, 'Add', {'option': define})
             for include_dir in self.meson.get_include_directories(target):
-                ETree.SubElement(compiler, "Add", {"directory": include_dir})
+                ETree.SubElement(compiler, 'Add', {'directory': include_dir})
 
-            make_commands = ETree.SubElement(build_target, "MakeCommands")
+            make_commands = ETree.SubElement(build_target, 'MakeCommands')
             # TODO: lookup path to ninja
-            ETree.SubElement(make_commands, "Build", {"command": "/usr/bin/ninja " + target["id"]})
-            ETree.SubElement(make_commands, "CompileFile", {"command": "/usr/bin/ninja " + target["id"]})
+            ETree.SubElement(make_commands, 'Build', {'command': '/usr/bin/ninja ' + target['id']})
+            ETree.SubElement(make_commands, 'CompileFile', {'command': '/usr/bin/ninja ' + target['id']})
 
         for target in self.meson.get_targets():
             target_files = self.meson.get_target_files(target)
             for target_file in target_files:
-                unit = ETree.SubElement(project, "Unit", {"filename": path.join(self.source_dir, target_file)})
-                ETree.SubElement(unit, "Option", {"target": target["name"]})
+                unit = ETree.SubElement(project, 'Unit', {'filename': path.join(self.source_dir, target_file)})
+                ETree.SubElement(unit, 'Option', {'target': target['name']})
 
                 base = path.splitext(path.basename(target_file))[0]
-                header_exts = ("h", "hpp")
+                header_exts = ('h', 'hpp')
                 for ext in header_exts:
                     header_file = path.abspath(
-                        path.join(self.source_dir, path.dirname(target_file), path.join(base + "." + ext)))
+                        path.join(self.source_dir, path.dirname(target_file), path.join(base + '.' + ext)))
                     if path.exists(header_file):
-                        unit = ETree.SubElement(project, "Unit", {"filename": header_file})
-                        ETree.SubElement(unit, "Option", {"target": target["name"]})
+                        unit = ETree.SubElement(project, 'Unit', {'filename': header_file})
+                        ETree.SubElement(unit, 'Option', {'target': target['name']})
 
         for file in self.meson.get_buildsystem_files():
-            unit = ETree.SubElement(project, "Unit", {"filename": path.join(self.source_dir, file)})
-            ETree.SubElement(unit, "Option", {"virtualFolder": "Meson Files"})
+            unit = ETree.SubElement(project, 'Unit', {'filename': path.join(self.source_dir, file)})
+            ETree.SubElement(unit, 'Option', {'virtualFolder': 'Meson Files'})
 
-        project_file = path.join(self.build_dir, self.meson.get_project_info()["name"] + ".cbp")
-        tree.write(project_file, "unicode", True)
+        project_file = path.join(self.build_dir, self.meson.get_project_info()['name'] + '.cbp')
+        tree.write(project_file, 'unicode', True)
+
+    def gen_make_project(self):
+        # CLion requires a CMakeFiles directory at root of build directory
+        root_cmakefiles_dir = path.join(self.build_dir, 'CMakeFiles')
+        if not path.exists(root_cmakefiles_dir):
+            mkdir(root_cmakefiles_dir)
+
+        version_cmakefiles_dir = path.join(root_cmakefiles_dir, '.'.join(map(str, self.version)))
+        if not path.exists(version_cmakefiles_dir):
+            mkdir(version_cmakefiles_dir)
+        with open(path.join(version_cmakefiles_dir, 'CMakeCCompiler.cmake'), 'w') as file:
+            file.write('set(CMAKE_C_COMPILER "/usr/bin/cc")')
+        with open(path.join(version_cmakefiles_dir, 'CMakeCXXCompiler.cmake'), 'w') as file:
+            file.write('set(CMAKE_CXX_COMPILER "/usr/bin/c++")')
+
+        # CLion requires that Makefile.cmake exists
+        with open(path.join(root_cmakefiles_dir, 'Makefile.cmake'), 'w') as file:
+            file.write('')
+
+        # CLion fetches target directories from TargetDirectories.txt
+        with open(path.join(root_cmakefiles_dir, 'TargetDirectories.txt'), 'w') as target_dir_file:
+            targets = self.meson.get_targets()
+
+            for target in targets:
+                # All directories under the build directory should have a CMakeFiles directory
+                cmakefiles_dir = path.join(self.build_dir, path.split(target['filename'])[0], 'CMakeFiles')
+                Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
+
+                # CLion fetches target name from TARGET_NAME.dir directories
+                target_path = path.join(self.build_dir, path.split(target['filename'])[0], 'CMakeFiles',
+                                        target['name'] + '.dir')
+                target_dir_file.write(target_path + '\n')
+                Path(target_path).mkdir(exist_ok=True)
+
+                # CLion requires that TARGET_PATH/DependInfo.cmake exists
+                with open(path.join(target_path, 'DependInfo.cmake'), 'w') as depend_file:
+                    depend_file.write('')
+
+                # CLion fetches target name from TARGET_PATH/build.make
+                with open(path.join(target_path, 'build.make'), 'w') as build_file:
+                    build_file.write('%s: %s' % (path.join(target_path, 'build'), path.join(self.meson.build_dir, target['filename'])))
+
+                with open(path.join(target_path, 'flags.make'), 'w') as flags_file:
+                    compiler = self.meson.get_compiler(target)
+                    if compiler:
+                        if compiler.endswith('++'):
+                            prefix = 'CXX'
+                        else:
+                            prefix = 'CC'
+                        flags_file.write('%s_FLAGS = %s\n' % (prefix, ' '.join(self.meson.get_flags(target))))
+                        flags_file.write('%s_DEFINES = %s\n' % (prefix, ' '.join(self.meson.get_defines(target))))
+                        flags_file.write('%s_INCLUDES = %s\n' % (prefix, ' '.join(
+                            ['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
+
+
+class ServerLogHandler(logging.Handler):
+    def __init__(self, server):
+        super().__init__()
+        self.server = server
+
+    def emit(self, record):
+        log_entry = self.format(record)
+        if self.server.conn:
+            pass
+            self.server.send_message(log_entry, log=False)
 
 
 class CMakeWrapperServer:
@@ -699,23 +677,314 @@ class CMakeWrapperServer:
 
     def __init__(self, cmake):
         self.cmake = cmake
-        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.socket_file = ""
+        self.meson = cmake.meson
+        self.logger = None
+        self.sock = None
+        self.conn = None
+        self.running = False
+        self.requests = []
+        self.protocol_version = (1, 1)
+        self.cookies = {}
+
+    def log(self, msg):
+        if isinstance(msg, Exception):
+            self.logger.info(msg, exc_info=msg)
+        else:
+            self.logger.info(msg)
 
     def run(self, args):
-        for arg in args:
-            if arg.startswith("--pipe="):
-                self.socket_file = arg[7:]
+        try:
+            self.connect(args)
+            while 1:
+                request = self.recv()
+                if not request:
+                    break
 
-        self.socket.bind(self.socket_file)
-        self.socket.listen(1)
-        conn, addr = self.socket.accept()
-        while 1:
-            data = conn.recv(1024)
-            print(data)
-            if not data: break
-            conn.send(data)
-        conn.close()
+                if not hasattr(self, 'handle_' + request['type'].lower()):
+                    self.log('unhandled request: %s' % request)
+                    break
+                getattr(self, 'handle_' + request['type'].lower())(request)
+
+        except BrokenPipeError:
+            self.log('lost connection to client')
+        finally:
+            self.running = False
+            self.log('closing connection')
+            self.conn.close()
+            self.sock.close()
+
+    def connect(self, args):
+        for arg in args:
+            if arg.startswith('--pipe='):
+                pipe = arg[7:]
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(pipe)
+        self.sock.listen(1)
+
+        self.conn, _ = self.sock.accept()
+        self.handle_hello()
+        self.handle_handshake()
+        self.running = True
+        self.log('running on "%s"' % pipe)
+
+    def recv(self):
+        data = b''
+        while True:
+            if any(self.requests):
+                return self.requests.pop(0)
+
+            new_data = self.conn.recv(1024)
+            if not new_data:
+                return None
+            data += new_data
+            if data.endswith(SERVER_FOOTER):
+                requests = data.split(SERVER_FOOTER + SERVER_HEADER)
+                requests[0] = requests[0][len(SERVER_HEADER):]
+                requests[-1] = requests[-1][:-len(SERVER_FOOTER)]
+
+                for request in requests:
+                    request = json.loads(request)
+                    if 'cookie' in request:
+                        self.cookies[request['type']] = request['cookie']
+                    self.log('%s: "%s"' % (request['type'], request))
+                    self.requests.append(request)
+
+    def send(self, response, log=False):
+        if 'inReplyTo' in response:
+            if response['inReplyTo'] in self.cookies:
+                response['cookie'] = self.cookies[response['inReplyTo']]
+            if log:
+                self.log('%s (%s): "%s"' % (response['inReplyTo'], response['type'], response))
+        elif log:
+            self.log(response)
+
+        response = SERVER_HEADER + json.dumps(response).encode('gbk') + SERVER_FOOTER
+        self.conn.sendall(response)
+
+    def send_reply(self, reply_to, log=False):
+        response = {
+            'inReplyTo': reply_to,
+            'type': 'reply'
+        }
+        self.send(response, log)
+
+    def send_message(self, msg, reply_to=None, log=False):
+        response = {
+            'type': 'message',
+            'message': msg,
+        }
+        if reply_to:
+            response['inReplyTo'] = reply_to
+
+        self.send(response, log)
+
+    def send_progress(self, reply_to, progress_cur, progress_max=1000, progress_min=0, msg='', log=False):
+        response = {
+            'inReplyTo': reply_to,
+            'type': 'progress',
+            'progressCurrent': progress_cur,
+            'progressMaximum': progress_max,
+            'progressMessage': progress_min,
+            'progressMinimum': 0,
+        }
+        self.send(response, log)
+
+    def handle_hello(self):
+        response = {
+            'supportedProtocolVersions': [{
+                'isExperimental': True,
+                'major': self.protocol_version[0],
+                'minor': self.protocol_version[1]
+            }],
+            'type': 'hello'
+        }
+        self.send(response)
+
+    def handle_handshake(self):
+        request = self.recv()
+        if not request:
+            return
+        self.cmake.set_build_dir(request['buildDirectory'])
+        self.cmake.set_build_dir(request['buildDirectory'])
+        self.cmake.set_build_dir(request['buildDirectory'])
+        self.cmake.set_build_dir(request['buildDirectory'])
+        if 'generator' in request:
+            self.cmake.set_generator(request['generator'])
+        if 'sourceDirectory' in request:
+            self.cmake.set_source_dir(request['sourceDirectory'])
+        self.cmake.load_cache_entries()
+
+        self.send_reply('handshake')
+
+    def handle_configure(self, request):
+        for entry in request['cacheArguments']:
+            if entry.startswith('-D'):
+                self.cmake.parse_cache_entry(entry)
+
+        self.send_progress('configure', 1000, msg='Configuring')
+        self.send_message('Configuring done', 'configure')
+        self.send_reply('configure')
+
+    def handle_compute(self, request):
+        self.cmake.generate_cmd()
+
+        self.send_progress('compute', 1000, msg='Generating')
+        self.send_message('Generating done', 'compute')
+        self.send_reply('compute')
+
+    def handle_globalsettings(self, request):
+        response = {
+            'inReplyTo': 'globalSettings',
+            'type': 'reply',
+            'capabilities': {
+                'generators': [
+                    {
+                        'name': 'Ninja',
+                        'platformSupport': False,
+                        'toolsetSupport': False,
+                        'extraGenerators': [
+                            'CodeBlocks',
+                        ]
+                    },
+                    {
+                        'name': 'Unix Makefiles',
+                        'platformSupport': False,
+                        'toolsetSupport': False,
+                        'extraGenerators': [
+                            "CodeBlocks",
+                        ],
+                    },
+                ],
+                'serverMode': True,
+                'version': {
+                    'isDirty': False,
+                    'major': self.cmake.version[0],
+                    'minor': self.cmake.version[1],
+                    'patch': self.cmake.version[2],
+                    'string': '.'.join(map(str, self.cmake.version)),
+                    'suffix': '',
+                }
+            },
+            'buildDirectory': self.cmake.build_dir,
+            'sourceDirectory': self.cmake.source_dir,
+            'generator': self.cmake.generator,
+            'checkSystemVars': False,
+            'debugOutput': False,
+            'extraGenerator': '',
+            'trace': False,
+            'traceExpand': False,
+            'warnUninitialized': False,
+            'warnUnused': False,
+            'warnUnusedCli': True
+        }
+        self.send(response)
+
+    def handle_cmakeinputs(self, request):
+        response = {
+            'inReplyTo': 'cmakeInputs',
+            'type': 'reply',
+            'buildFiles': [
+                {
+                    'sources': self.cmake.meson.get_buildsystem_files(),
+                    'isCMake': False,
+                    'isTemporary': False
+                }
+            ],
+            'cmakeRootDirectory': '/usr/share/cmake',
+            'sourceDirectory': self.cmake.source_dir,
+        }
+        self.send(response)
+
+    def get_cache_entries(self):
+        cache_entries = []
+        for key, val in self.cmake.cache_entries.items():
+            cache_entries.append({
+                'key': key.upper(),
+                'value': val[0],
+                'type': val[1],
+                'properties': {}
+            })
+        return cache_entries
+
+    def handle_cache(self, request):
+        response = {
+            'inReplyTo': 'cache',
+            'type': 'reply',
+            'cache': self.get_cache_entries(),
+        }
+        self.send(response)
+
+    def get_include_paths(self, target):
+        include_paths = []
+        for include_path in self.meson.get_include_directories(target, False):
+            include_paths.append({'path': include_path, 'isSystem': False})
+        for include_path in self.meson.get_default_include_directories(target):
+            include_paths.append({'path': include_path, 'isSystem': True})
+        return include_paths
+
+    def get_file_groups(self, target):
+        sources = []
+        for target_file in self.meson.get_target_files(target):
+            sources.append(path.relpath(target_file, path.dirname(target['filename'])))
+        file_group = {
+            'isGenerated':  False,
+            'sources': sources,
+            'compileFlags': ' '.join(self.meson.get_flags(target)),
+            'defines': [define[2:] for define in self.meson.get_defines(target)],
+            'includePath':  self.get_include_paths(target),
+            'language': 'CXX' if self.meson.get_compiler(target).endswith('') else 'C'
+        }
+
+        meson_group = {
+            'isGenerated': False,
+            'sources': ['meson.build']
+        }
+
+        return [file_group, meson_group]
+
+    def get_project(self):
+        project = {
+            'name': self.meson.get_project_info()['name'],
+            'buildDirectory': self.cmake.build_dir,
+            'sourceDirectory': self.cmake.source_dir,
+            'targets': []
+        }
+
+        type_mapper = {
+            'executable': 'EXECUTABLE',
+            'static library': 'STATIC_LIBRARY',
+            'shared library': 'SHARED_LIBRARY',
+            'custom': 'UTILITY'
+        }
+
+        for mtarget in self.meson.get_targets():
+            target = {}
+            target['name'] = mtarget['name']
+            target['fullName'] = mtarget['name']
+            target['artifacts'] = [
+                path.join(self.meson.build_dir, mtarget['filename'])
+            ]
+            target['buildDirectory'] = path.join(self.cmake.build_dir, path.dirname(mtarget['filename']))
+            target['sourceDirectory'] = path.join(self.cmake.source_dir, path.dirname(mtarget['filename']))
+            target['type'] = type_mapper[mtarget['type']]
+            target['fileGroups'] = self.get_file_groups(mtarget)
+            project['targets'].append(target)
+        return project
+
+    def handle_codemodel(self, request):
+        response = {
+            'inReplyTo': 'codemodel',
+            'type': 'reply',
+            'configurations': [
+                {
+                    'name': self.cmake.build_type,
+                    'projects': [
+                        self.get_project(),
+                    ]
+                }
+            ],
+        }
+        self.send(response)
 
 
 CMakeWrapper().run(argv)

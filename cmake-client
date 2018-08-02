@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+import socket
+import sys
+import json
+import logging
+from os import path
+from random import random
+
+SERVER_HEADER = b'\n[== "CMake Server" ==[\n'
+SERVER_FOOTER = b'\n]== "CMake Server" ==]\n'
+
+
+class CMakeClient:
+    def __init__(self, pipe, gen, build_dir, source_dir=None):
+        self.pipe = pipe
+        self.gen = gen
+        self.build_dir = build_dir
+        self.source_dir = source_dir
+        self.sock = None
+        self.cookies = {}
+        self.responses = []
+
+        self.logger = logging.getLogger('CMake Client')
+        self.logger.setLevel(logging.INFO)
+
+        handler = logging.FileHandler(path.join(self.build_dir, 'cmake-client.log'))
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+    def log(self, msg):
+        if isinstance(msg, Exception):
+            self.logger.info(msg, exc_info=msg)
+        else:
+            self.logger.info(msg)
+
+    def run(self):
+        try:
+            self.connect()
+            self.send_configure()
+            self.send_compute()
+            self.send_globalsettings()
+            self.send_cmakeinputs()
+            self.send_cache()
+            self.send_codemodel()
+
+            response = self.recv()
+            while response:
+                if response['type'] in ('message', 'progress'):
+                    if not hasattr(self, 'handle_' + response['type']):
+                        raise Exception('Unhandled response: %s' % response)
+                    getattr(self, 'handle_' + response['type'])(response)
+                else:
+                    if not hasattr(self, 'handle_' + response['inReplyTo'].lower()):
+                        raise Exception('Unhandled response: %s' % response)
+                    getattr(self, 'handle_' + response['inReplyTo'].lower())(response)
+
+                response = self.recv()
+        except ConnectionRefusedError:
+            self.log('Could not connect to: ' + self.pipe)
+        except Exception as e:
+            self.log(e)
+        finally:
+            self.sock.close()
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.pipe)
+        self.log('Connected to socket: ' + self.pipe)
+        self.sent_handshake()
+        self.handle_handshake(self.recv())
+
+    def recv(self):
+        data = b''
+        while True:
+            if any(self.responses):
+                response = self.responses.pop(0)
+                self.check_cookie(response)
+                return response
+
+            new_data = self.sock.recv(1024)
+            if not new_data:
+                return None
+            data += new_data
+            if data.endswith(SERVER_FOOTER):
+                self.parse_recv(data)
+
+    def parse_recv(self, data):
+        responses = data.split(SERVER_FOOTER + SERVER_HEADER)
+        responses[0] = responses[0][len(SERVER_HEADER):]
+        responses[-1] = responses[-1][:-len(SERVER_FOOTER)]
+
+        for response in responses:
+            response = json.loads(response)
+            if 'inReplyTo' in response:
+                self.log('Received %s: (%s)\n%s' % (response['type'], response['inReplyTo'], json.dumps(response, indent=4, sort_keys=True)))
+            else:
+                self.log('Received %s:\n%s' % (response['type'], json.dumps(response, indent=4, sort_keys=True)))
+            self.responses.append(response)
+
+    def check_cookie(self, response):
+        if 'cookie' in response:
+            if self.cookies[response['inReplyTo']] != response['cookie']:
+                raise Exception('Wrong cookie returned')
+
+    def send(self, request):
+        request['cookie'] = str(random())
+        self.cookies[request['type']] = request['cookie']
+
+        self.log('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
+        request = SERVER_HEADER + json.dumps(request).encode('gbk') + SERVER_FOOTER
+        self.sock.sendall(request)
+
+    def send_simple(self, type):
+        request = {
+            'type': type,
+        }
+        self.send(request)
+
+    def send_compute(self):
+        self.send_simple('compute')
+
+    def send_globalsettings(self):
+        self.send_simple('globalSettings')
+
+    def send_cmakeinputs(self):
+        self.send_simple('cmakeInputs')
+
+    def send_cache(self):
+        self.send_simple('cache')
+
+    def send_codemodel(self):
+        self.send_simple('codemodel')
+
+    def sent_handshake(self):
+        request = {
+            'type': 'handshake',
+            'protocolVersion': {
+                'major': 1
+            },
+            'buildDirectory': self.build_dir,
+            'generator': self.gen,
+        }
+        if self.source_dir:
+            request['sourceDirectory'] = self.source_dir
+        self.send(request)
+
+        self.recv()
+
+    def send_configure(self):
+        request = {
+            'type': 'configure',
+            'cacheArguments': [
+                '-DTESTVAR=TESTVAL',
+                '-DCMAKE_BUILD_TYPE:STRING=Debug',
+                '-DCMAKE_CXX_COMPILER=/usr/bin/clang++-6.0'
+            ]
+        }
+        self.send(request)
+
+    def handle_hello(self, response):
+        self.log('Handle Hello')
+
+    def handle_message(self, response):
+        self.log('Handle Message')
+
+    def handle_progress(self, response):
+        self.log('Handle Progress')
+
+    def handle_handshake(self, response):
+        self.log('Handle Handshake')
+
+    def handle_configure(self, response):
+        self.log('Handle Configure')
+
+    def handle_compute(self, response):
+        self.log('Handle Configure')
+
+    def handle_globalsettings(self, response):
+        self.log('Handle Global Settings')
+
+    def handle_cmakeinputs(self, response):
+        self.log('Handle CMake Inputs')
+
+    def handle_cache(self, response):
+        self.log('Handle Cache')
+
+    def handle_codemodel(self, response):
+        self.log('Handle Codemodel')
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 4:
+        pipereader = CMakeClient(sys.argv[1], sys.argv[2], sys.argv[3])
+    else:
+        pipereader = CMakeClient(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
+    pipereader.run()
