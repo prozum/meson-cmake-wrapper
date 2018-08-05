@@ -36,3 +36,21 @@ Change CMake option to path of meson-cmake-wrapper.
 * Run target with valgrind
 * Debug target
 * Autocompletion
+
+## QtCreator
+
+### Setup
+1. In CMake settings (Tools > Options... > Build & Run > CMake):
+Add manual CMake option with path of meson-cmake-wrapper.
+
+2. Create an empty CMakeLists.txt file in root of project.
+
+### Works
+* Detect targets
+* Detect toolchain
+* Detect target files
+* Build target
+* Run target
+* Run target with valgrind
+* Debug target
+* Autocompletion
