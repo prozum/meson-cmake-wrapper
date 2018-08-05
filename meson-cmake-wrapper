@@ -270,7 +270,7 @@ class CMakeWrapper:
     def __init__(self):
         self.version = [3, 10, 0]
         self.path = argv[0]
-        self.debug = True
+        self.debug = False
         self.command = 'generate'
         self.generator = None
         self.build_type = None
@@ -302,6 +302,8 @@ class CMakeWrapper:
             self.save_cache_entries()
 
     def parse_args(self, args):
+        if len(args) == 1:
+            self.command = 'none'
         i = 1
         while i < len(args):
             if args[i] == '-version' or args[i] == '--version':
@@ -340,35 +342,38 @@ class CMakeWrapper:
                 self.set_source_dir(args[i])
             i += 1
 
+    def none_cmd(self):
+        print('Usage\n')
+        print('  meson-cmake-wrapper [options] <path-to-source>')
+        print('  meson-cmake-wrapper [options] <path-to-existing-build>\n')
+        print('Specify a source directory to (re-)generate a build system for it in the')
+        print('current working directory.  Specify an existing build directory to')
+        print('re-generate its build system.\n')
+        print('Run \'meson-cmake-wrapper --help\' for more information.\n')
+
     def version_cmd(self):
         print('cmake version {0}'.format('.'.join(map(str, self.version))))
 
     def help_cmd(self):
-        print('Usage')
-        print('')
+        print('Usage\n')
         print('meson-cmake-wrapper [options] <path-to-source>')
-        print('meson-cmake-wrapper [options] <path-to-existing-build>')
-        print('')
+        print('meson-cmake-wrapper [options] <path-to-existing-build>\n')
         print('Specify a source directory to (re-)generate a build system for it in the')
         print('current working directory.  Specify an existing build directory to')
-        print('re-generate its build system.')
-        print('')
+        print('re-generate its build system.\n')
         print('Options')
         print('  -C <initial-cache>           = Pre-load a script to populate the cache.')
         print('  -D <var>[:<type>]=<value>    = Create a cmake cache entry.')
         print('  -G <generator-name>          = Specify a build system generator.')
-        print('  -E                           = CMake command mode.')
-        print('')
+        print('  -E                           = CMake command mode.\n')
         print('  --build <dir>                = Build a CMake-generated project binary tree.')
         print('  --version,-version,/V [<f>]  = Print version number and exit.')
-        print('  --debug-output               = Put cmake in a debug mode.')
-        print('')
-        print('Generators')
-        print('')
+        print('  --debug-output               = Put cmake in a debug mode.\n')
+        print('Generators\n')
         print('The following generators are available on this platform:')
         print('  Unix Makefiles               = Generates standard UNIX makefiles.')
         print('  Ninja                        = Generates build.ninja files.')
-        print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.')
+        print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.\n')
 
     def generate_cmd(self):
         # Set default build dir
