@@ -37,7 +37,8 @@
         },
         {
             "name": "meson-cmake-wrapper",
-            "type": "pythonExperimental",
+            //"type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "preLaunchTask": "removepipe",
@@ -50,22 +51,20 @@
             "debugStdLib": true
         },
         {
-            "name": "meson-cmake-wrapper",
-            "type": "pythonExperimental",
+            "name": "meson-cmake-wrapper (enviroment)",
+            //"type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
-            "preLaunchTask": "removepipe",
             "args": [
                 "-E",
-                "server",
-                "--pipe=/tmp/cmake-pipe",
-                "--experiment"
+                "environment",
             ],
             "debugStdLib": true
         },
         {
             "name": "meson-cmake-wrapper (codeblocks)",
-            "type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "cwd": "${workspaceFolder}/sample-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
@@ -90,5 +89,15 @@
             ],
             "debugStdLib": true
         },
+        {
+            "name": "python attach",
+            "type": "python",
+            "request": "attach",
+            "remoteRoot": "${workspaceFolder}", 
+            "localRoot": "${workspaceFolder}",
+            "port": 3000,
+            "secret": "SECRET",
+            "host": "127.0.0.1"
+        }
     ]
 }

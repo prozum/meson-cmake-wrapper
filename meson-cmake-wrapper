@@ -5,10 +5,14 @@ import socket
 import logging
 import logging.config
 import xml.etree.ElementTree as ETree
-from os import mkdir, path, getcwd
+import filecmp
+import hashlib
+from os import mkdir, path, getcwd, chdir, remove, rename, makedirs, environ, symlink, utime
+from shutil import copy, copytree, rmtree
 from pathlib import Path
 from subprocess import call, Popen, PIPE, DEVNULL
 from sys import argv, stderr
+from time import sleep
 
 SERVER_HEADER = b'\n[== "CMake Server" ==[\n'
 SERVER_FOOTER = b'\n]== "CMake Server" ==]\n'
@@ -67,9 +71,6 @@ class Meson:
             return self.c_targets
 
         output = self.call(['introspect', '--targets', self.build_dir])
-        self.log('(targets) "%s"' % output)
-        for it in self.__dict__:
-            self.log('(targets): %s\t%s' % (it, self.__dict__[it]))
         self.c_targets = json.loads(output)
         return self.c_targets
 
@@ -164,6 +165,8 @@ class Meson:
 
     def get_default_include_directories(self, target=None):
         compiler = self.get_compiler(target)
+        if not compiler:
+            Exception('No compile_commands.json in build dir')
 
         if compiler.endswith('++'):
             lang = 'c++'
@@ -239,6 +242,26 @@ class NinjaBackend:
         return target_name
 
 
+def debug_connect():
+    connected = False
+    while not connected:
+        try:
+            import socket
+            server = socket.socket(proto=socket.IPPROTO_TCP)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(('127.0.0.1', 3018))
+            server.close()
+            connected = True
+        except OSError:
+            import time
+            time.sleep(1)
+
+    import ptvsd
+    ptvsd.enable_attach('SECRET', ('127.0.0.1', 3018))
+    ptvsd.wait_for_attach()
+    return True
+
+
 class CMakeWrapper:
     """
     Class that emulates CMake commands and translates them to the equivalent in Meson.
@@ -247,6 +270,7 @@ class CMakeWrapper:
     def __init__(self):
         self.version = [3, 10, 0]
         self.path = argv[0]
+        self.debug = False
         self.command = 'generate'
         self.generator = None
         self.build_type = None
@@ -256,16 +280,12 @@ class CMakeWrapper:
         self.build_dir = None
         self.source_dir = None
         self.meson = Meson(self)
-        self.server = CMakeWrapperServer(self)
+        self.server = ServerWrapper(self)
+        self.tool = CommandToolWrapper(self)
         self.logger = None
 
     def run(self, args):
         self.parse_args(args)
-
-        self.log('argv:\t%s' % argv)
-        self.log('cwd:\t%s' % getcwd())
-        self.log('build_dir:\t%s' % self.build_dir)
-        self.log('source_dir:\t%s' % self.source_dir)
 
         # Unknown command
         if not hasattr(self, self.command + '_cmd'):
@@ -286,8 +306,10 @@ class CMakeWrapper:
         while i < len(args):
             if args[i] == '-version' or args[i] == '--version':
                 self.command = 'version'
-            if args[i] == '-help' or args[i] == '--help':
+            elif args[i] == '-help' or args[i] == '--help':
                 self.command = 'help'
+            elif args[i] == '--debug-output':
+                self.debug = True
             elif args[i] == '-G':
                 self.command = 'generate'
                 i += 1
@@ -306,14 +328,11 @@ class CMakeWrapper:
                 i += 1
                 self.set_build_type(args[i])
             elif args[i] == '--':
-                i += 1
-                while i < len(args):
-                    self.target_args.append(args[i])
-                    i += 1
+                self.target_args = args[i + 1:]
+                break
             elif args[i] == '-E':
-                i += 1
-                self.command = args[i]
-                self.command_args = args[i:]
+                self.command = 'tool'
+                self.command_args = args[i + 1:]
                 break
             elif args[i].startswith('-D'):
                 self.parse_cache_entry(args[i])
@@ -321,10 +340,73 @@ class CMakeWrapper:
                 self.set_source_dir(args[i])
             i += 1
 
-        if not self.generator:
-            self.set_generator('Unix Makefiles')
+    def version_cmd(self):
+        print('cmake version {0}'.format('.'.join(map(str, self.version))))
+
+    def help_cmd(self):
+        print('Usage')
+        print('')
+        print('meson-cmake-wrapper [options] <path-to-source>')
+        print('meson-cmake-wrapper [options] <path-to-existing-build>')
+        print('')
+        print('Specify a source directory to (re-)generate a build system for it in the')
+        print('current working directory.  Specify an existing build directory to')
+        print('re-generate its build system.')
+        print('')
+        print('Options')
+        print('  -C <initial-cache>           = Pre-load a script to populate the cache.')
+        print('  -D <var>[:<type>]=<value>    = Create a cmake cache entry.')
+        print('  -G <generator-name>          = Specify a build system generator.')
+        print('  -E                           = CMake command mode.')
+        print('')
+        print('  --build <dir>                = Build a CMake-generated project binary tree.')
+        print('  --version,-version,/V [<f>]  = Print version number and exit.')
+        print('  --debug-output               = Put cmake in a debug mode.')
+        print('')
+        print('Generators')
+        print('')
+        print('The following generators are available on this platform:')
+        print('  Unix Makefiles               = Generates standard UNIX makefiles.')
+        print('  Ninja                        = Generates build.ninja files.')
+        print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.')
+
+    def generate_cmd(self):
+        print('Generate to build directory: ' + self.build_dir)
+
+        # Set default build dir
         if not self.build_dir:
             self.set_build_dir(getcwd())
+
+        # Set default generator
+        if not self.generator:
+            self.set_generator('Unix Makefiles')
+
+        # Make sure meson is setup
+        if not self.meson.setup():
+            return
+
+        # Create CMakeCache.txt
+        self.gen_cmake_cache()
+
+        if self.generator.endswith('Unix Makefiles'):
+            self.gen_make_project()
+
+        if self.generator.startswith('CodeBlocks'):
+            self.gen_codeblocks_project()
+
+    def build_cmd(self):
+        print('Building target: ' + self.target)
+
+        # Set default build dir
+        if not self.build_dir:
+            self.set_build_dir(getcwd())
+        
+        self.load_cache_entries()
+
+        self.meson.build()
+
+    def tool_cmd(self):
+        self.tool.run(self.command_args)
 
     def init_logging(self):
         # Setup loggers
@@ -340,7 +422,7 @@ class CMakeWrapper:
         for logger in loggers:
             logger.handlers = []
 
-        # Setup handlers
+        # Setup handlers and formatters
         handlers = []
         handler = logging.FileHandler(path.join(self.build_dir, 'meson-cmake-wrapper.log'))
         handler.setLevel(logging.INFO)
@@ -348,17 +430,18 @@ class CMakeWrapper:
         handler.setFormatter(formatter)
         handlers.append(handler)
 
-        handler = logging.StreamHandler(stderr)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(name)s: %(message)s')
-        handler.setFormatter(formatter)
-        handlers.append(handler)
+        if self.debug:
+            handler = logging.StreamHandler(stderr)
+            handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(name)s: %(message)s')
+            handler.setFormatter(formatter)
+            handlers.append(handler)
 
-        handler = ServerLogHandler(self.server)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(name)s: %(message)s')
-        handler.setFormatter(formatter)
-        handlers.append(handler)
+            handler = ServerLogHandler(self.server)
+            handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(name)s: %(message)s')
+            handler.setFormatter(formatter)
+            handlers.append(handler)
 
         for logger in loggers:
             logger.setLevel(logging.INFO)
@@ -388,22 +471,28 @@ class CMakeWrapper:
 
     def set_build_dir(self, build_dir):
         self.build_dir = path.abspath(build_dir)
-        self.meson.build_dir = path.join(self.build_dir)
+        self.meson.build_dir = self.build_dir
         self.init_logging()
+        self.load_cache_entries()
+
+        if (self.source_dir):
+            self.log('(argv) "%s"' % argv)
+            self.log('(cwd) "%s"' % getcwd())
+            self.log('(build_dir) "%s"' % self.build_dir)
+            self.log('(source_dir) "%s"' % self.source_dir)
 
     def set_build_type(self, build_type):
-        build_type = build_type.upper()
-        if build_type in ('DEBUG', ''):
+        self.build_type = build_type
+        if build_type.upper() in ('DEBUG', ''):
             self.meson.build_type = 'debug'
-        elif build_type == 'RELEASE':
+        elif build_type.upper() == 'RELEASE':
             self.meson.build_type = 'release'
-        elif build_type == 'RELWITHDEBINFO':
+        elif build_type.upper() == 'RELWITHDEBINFO':
             self.meson.build_type = 'debugoptimized'
-        elif build_type == 'MINSIZEREL':
+        elif build_type.upper() == 'MINSIZEREL':
             self.meson.build_type = 'minsize'
         else:
             self.meson.build_type = 'plain'
-        self.build_type = build_type
 
     def init_cache_entries(self):
         if not self.source_dir:
@@ -438,12 +527,23 @@ class CMakeWrapper:
             key, val = entry[2:].split('=', 1)
             ty = 'STRING'
         self.cache_entries[key] = (val, ty, '')
+        self.update_cache_entry(key, val)
 
     def update_cache_entry(self, key, val):
-        if key == 'CMAKE_BUILD_TYPE':
+        if key == 'CMAKE_GENERATOR':
+            self.set_generator(val)
+        elif key == 'CMAKE_BUILD_TYPE':
             self.set_build_type(val)
         elif key == 'CMAKE_HOME_DIRECTORY':
             self.set_source_dir(val)
+        elif key == 'CMAKE_C_COMPILER':
+            environ['CC'] = val
+        elif key == 'CMAKE_CXX_COMPILER':
+            environ['CXX'] = val
+        elif key == 'CMAKE_C_FLAGS':
+            environ['CFLAGS'] = val
+        elif key == 'CMAKE_CXX_FLAGS':
+            environ['CXXFLAGS'] = val
         # Use CMake variable 'MESON' for custom Meson path
         elif key == 'MESON':
             self.meson.path = val
@@ -453,85 +553,24 @@ class CMakeWrapper:
 
     def update_cache_entries(self):
         for key, val in self.cache_entries.items():
-            self.update_cache_entry(key, val)
+            self.update_cache_entry(key, val[0])
 
     def save_cache_entries(self):
-        cache_file = path.join(self.build_dir, 'cache_entries.pk1')
-        with open(cache_file, 'wb') as output:
-            pickle.dump(self.cache_entries, output, pickle.HIGHEST_PROTOCOL)
+        if self.build_dir:
+            cache_file = path.join(self.build_dir, 'cmake-cache.pk1')
+            with open(cache_file, 'wb') as output:
+                pickle.dump(self.cache_entries, output, pickle.HIGHEST_PROTOCOL)
 
     def load_cache_entries(self):
-        cache_file = path.join(self.build_dir, 'cache_entries.pk1')
-        if not path.exists(cache_file):
+        cache_file = path.join(self.build_dir, 'cmake-cache.pk1')
+        if path.exists(cache_file):
+            with open(cache_file, 'rb') as input:
+                self.cache_entries = pickle.load(input)
+                self.update_cache_entries()
+        elif self.source_dir:
             self.init_cache_entries()
-            return
-        with open(cache_file, 'rb') as input:
-            self.cache_entries = pickle.load(input)
-
-    def version_cmd(self):
-        print('cmake version {0}'.format('.'.join(map(str, self.version))))
-
-    def help_cmd(self):
-        print('Usage')
-        print('')
-        print('meson-cmake-wrapper [options] <path-to-source>')
-        print('meson-cmake-wrapper [options] <path-to-existing-build>')
-        print('')
-        print('Specify a source directory to (re-)generate a build system for it in the')
-        print('current working directory.  Specify an existing build directory to')
-        print('re-generate its build system.')
-        print('')
-        print('Options')
-        print('  -C <initial-cache>           = Pre-load a script to populate the cache.')
-        print('  -D <var>[:<type>]=<value>    = Create a cmake cache entry.')
-        print('  -G <generator-name>          = Specify a build system generator.')
-        print('  -E                           = CMake command mode.')
-        print('')
-        print('  --build <dir>                = Build a CMake-generated project binary tree.')
-        print('  --version,-version,/V [<f>]  = Print version number and exit.')
-        print('')
-        print('Generators')
-        print('')
-        print('The following generators are available on this platform:')
-        print('  Unix Makefiles               = Generates standard UNIX makefiles.')
-        print('  Ninja                        = Generates build.ninja files.')
-        print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.')
-
-    def generate_cmd(self):
-        print('Generate to build directory: ' + self.build_dir)
-
-        # Make sure meson is setup
-        if not self.meson.setup():
-            return
-
-        # Create CMakeCache.txt
-        self.gen_cmake_cache()
-
-        if self.generator.endswith('Unix Makefiles'):
-            self.gen_make_project()
-
-        if self.generator.startswith('CodeBlocks'):
-            self.gen_codeblocks_project()
-
-    def build_cmd(self):
-        print('Building target: ' + self.target)
-        self.meson.build()
-
-    def capabilities_cmd(self):
-        data = {'generators': [
-            {'extraGenerators': ['CodeBlocks'],
-             'name': 'Unix Makefiles', 'platformSupport': False, 'toolsetSupport': False},
-            {'extraGenerators': ['CodeBlocks'], 'name': 'Ninja',
-             'platformSupport': False, 'toolsetSupport': False}], 'serverMode': False,
-            'version': {'isDirty': False, 'major': self.version[0], 'minor': self.version[1], 'patch': self.version[2],
-                        'string': '.'.join(map(str, self.version)), 'suffix': ''}}
-        print(json.dumps(data))
-
-    def server_cmd(self):
-        self.server.run(self.command_args)
 
     def gen_cmake_cache(self):
-        self.log('generating cmake cache')
         with open(path.join(self.build_dir, 'CMakeCache.txt'), 'w') as file:
             file.write('# Generated by meson-cmake-wrapper\n\n')
             file.write('########################\n')
@@ -658,6 +697,198 @@ class CMakeWrapper:
                             ['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
 
 
+class CommandToolWrapper:
+    """
+    Class that emulates CMake Command-Line Tool Mode.
+    """
+
+    def __init__(self, cmake):
+        self.cmake = cmake
+
+    def list_cmds(self):
+        print('CMake Error: cmake version ' + '.'.join(map(str, self.cmake.version)))
+        print('Usage: cmake -E <command> [arguments...]')
+        print('Available commands:')
+        print('  capabilities              - Report capabilities built into cmake in JSON format')
+        print('  chdir dir cmd [args...]   - run command in a given directory')
+        print('  compare_files file1 file2 - check if file1 is same as file2')
+        print('  copy <file>... destination  - copy files to destination (either file or directory)')
+        print('  copy_directory <dir>... destination   - copy content of <dir>... directories to \'destination\' directory')
+        print('#  copy_if_different <file>... destination  - copy files if it has changed')
+        print('  echo [<string>...]        - displays arguments as text')
+        print('  echo_append [<string>...] - displays arguments as text but no new line')
+        print('  env [--unset=NAME]... [NAME=VALUE]... COMMAND [ARG]...')
+        print('                            - run command in a modified environment')
+        print('  environment               - display the current environment')
+        print('  make_directory <dir>...   - create parent and <dir> directories')
+        print('  md5sum <file>...          - create MD5 checksum of files')
+        print('  sha1sum <file>...         - create SHA1 checksum of files')
+        print('  sha224sum <file>...       - create SHA224 checksum of files')
+        print('  sha256sum <file>...       - create SHA256 checksum of files')
+        print('  sha384sum <file>...       - create SHA384 checksum of files')
+        print('  sha512sum <file>...       - create SHA512 checksum of files')
+        print('  remove [-f] <file>...     - remove the file(s), use -f to force it')
+        print('  remove_directory dir      - remove a directory and its contents')
+        print('  rename oldname newname    - rename a file or directory (on one volume)')
+        print('  server                    - start cmake in server mode')
+        print('  sleep <number>...         - sleep for given number of seconds')
+        print('#  tar [cxt][vf][zjJ] file.tar [file/dir1 file/dir2 ...]')
+        print('                            - create or extract a tar or zip archive')
+        print('  time command [args...]    - run command and return elapsed time')
+        print('  touch file                - touch a file.')
+        print('  touch_nocreate file       - touch a file but do not create it.')
+        print('Available on UNIX only:')
+        print('  create_symlink old new    - create a symbolic link new -> old')
+
+    def run(self, args):
+        if not hasattr(self, args[0] + '_cmd'):
+            self.list_cmds()
+            exit(1)
+        getattr(self, args[0] + '_cmd')(args[1:])
+
+    def capabilities_cmd(self, args):
+        data = {
+            'generators': [
+                {
+                    'extraGenerators': ['CodeBlocks'],
+                    'name': 'Unix Makefiles',
+                    'platformSupport': False,
+                    'toolsetSupport': False
+                },
+                {
+                    'extraGenerators': ['CodeBlocks'],
+                    'name': 'Ninja',
+                    'platformSupport': False,
+                    'toolsetSupport': False
+                }
+            ],
+            'serverMode': True,
+            'version': {
+                'isDirty': False,
+                'major': self.version[0],
+                'minor': self.version[1],
+                'patch': self.version[2],
+                'string': '.'.join(map(str, self.version)),
+                'suffix': ''
+            }
+        }
+        print(json.dumps(data))
+
+    def chdir_cmd(self, args):
+        chdir(path)
+        call(args[1:])
+
+    def compare_files_cmd(self, args):
+        if filecmp(args[0], args[1]):
+            exit(0)
+        print('Files "%s" to "%s" are different.' % (args[0], args[1]))
+        exit(1)
+
+    def copy_cmd(self, args):
+        files = args[:-1]
+        dir = args[-1]
+        if not path.exists(dir):
+            makedirs(dir)
+        for file in files:
+            copy(file, dir)
+
+    def copy_directory_cmd(self, args):
+        cp_dirs = args[:-1]
+        dir = args[-1]
+        if not path.exists(dir):
+            makedirs(dir)
+        for cp_dir in cp_dirs:
+            copytree(cp_dir, dir)
+
+    def echo_cmd(self, args):
+        print(' '.join(args))
+
+    def echo_append_cmd(self, args):
+        print(' '.join(args), end='')
+
+    def env_cmd(self, args):
+        env = dict(environ)
+        for i in range(len(args)):
+            if '=' in args[i]:
+                if args[i].startswith('--unset'):
+                    env.pop(args[i].splits('=')[1], None)
+                else:
+                    key, val = args[i].split('=')
+                    env[key] = val
+            else:
+                cmd = args[i:]
+                break
+        Popen(cmd, env=env)
+
+    def environment_cmd(self, args):
+        for key, val in environ.items():
+            print('%s=%s' % (key, val))
+
+    def make_directory_cmd(self, args):
+        for dir in args:
+            makedirs(dir)
+
+    def md5sum_cmd(self, args):
+        crypt = hashlib.md5()
+        for file in args:
+            with open(file, 'rb') as f:
+                crypt.update(f.read())
+            print('%s %s' % (crypt.hexdigest(), file))
+
+    def sha224sum_cmd(self, args):
+        crypt = hashlib.sha224()
+        for file in args:
+            with open(file, 'rb') as f:
+                crypt.update(f.read())
+
+    def sha256sum_cmd(self, args):
+        crypt = hashlib.sha256()
+        for file in args:
+            with open(file, 'rb') as f:
+                crypt.update(f.read())
+
+    def sha384sum_cmd(self, args):
+        crypt = hashlib.sha384()
+        for file in args:
+            with open(file, 'rb') as f:
+                crypt.update(f.read())
+
+    def sha512sum_cmd(self, args):
+        crypt = hashlib.md5()
+        for file in args:
+            with open(file, 'rb') as f:
+                crypt.update(f.read())
+
+    def remove_cmd(self, args):
+        for file in args:
+            if file != '-f':
+                remove(file)
+
+    def remove_directory_cmd(self, args):
+        rmtree(args[0])
+
+    def rename_cmd(self, args):
+        rename(args[0], args[1])
+
+    def server_cmd(self, args):
+        self.cmake.server.run(args)
+
+    def sleep_cmd(self, args):
+        sleep(float(args[0]))
+
+    def touch_cmd(self, args):
+        with open(args[0], 'a'):
+            utime(args[0])
+
+    def touch_nocreate_cmd(self, args):
+        if path.isfile(args[0]):
+            with open(args[0], 'a'):
+                utime(args[0])
+
+    def create_symlink_cmd(self, args):
+        symlink(args[0], args[1])
+
+
 class ServerLogHandler(logging.Handler):
     def __init__(self, server):
         super().__init__()
@@ -666,11 +897,10 @@ class ServerLogHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
         if self.server.conn:
-            pass
             self.server.send_message(log_entry, log=False)
 
 
-class CMakeWrapperServer:
+class ServerWrapper:
     """
     Class that emulates CMake Server Mode.
     """
@@ -687,6 +917,8 @@ class CMakeWrapperServer:
         self.cookies = {}
 
     def log(self, msg):
+        if not self.logger:
+            return
         if isinstance(msg, Exception):
             self.logger.info(msg, exc_info=msg)
         else:
@@ -701,7 +933,7 @@ class CMakeWrapperServer:
                     break
 
                 if not hasattr(self, 'handle_' + request['type'].lower()):
-                    self.log('unhandled request: %s' % request)
+                    self.log('unhandled request: "%s"' % request)
                     break
                 getattr(self, 'handle_' + request['type'].lower())(request)
 
@@ -746,29 +978,29 @@ class CMakeWrapperServer:
                     request = json.loads(request)
                     if 'cookie' in request:
                         self.cookies[request['type']] = request['cookie']
-                    self.log('%s: "%s"' % (request['type'], request))
+                    self.log('received (%s) "%s"' % (request['type'], request))
                     self.requests.append(request)
 
-    def send(self, response, log=False):
+    def send(self, response, log=True):
         if 'inReplyTo' in response:
             if response['inReplyTo'] in self.cookies:
                 response['cookie'] = self.cookies[response['inReplyTo']]
             if log:
-                self.log('%s (%s): "%s"' % (response['inReplyTo'], response['type'], response))
+                self.log('%s (%s) "%s"' % (response['inReplyTo'], response['type'], response))
         elif log:
             self.log(response)
 
         response = SERVER_HEADER + json.dumps(response).encode('gbk') + SERVER_FOOTER
         self.conn.sendall(response)
 
-    def send_reply(self, reply_to, log=False):
+    def send_reply(self, reply_to, log=True):
         response = {
             'inReplyTo': reply_to,
             'type': 'reply'
         }
         self.send(response, log)
 
-    def send_message(self, msg, reply_to=None, log=False):
+    def send_message(self, msg, reply_to=None, log=True):
         response = {
             'type': 'message',
             'message': msg,
@@ -778,7 +1010,7 @@ class CMakeWrapperServer:
 
         self.send(response, log)
 
-    def send_progress(self, reply_to, progress_cur, progress_max=1000, progress_min=0, msg='', log=False):
+    def send_progress(self, reply_to, progress_cur, progress_max=1000, progress_min=0, msg='', log=True):
         response = {
             'inReplyTo': reply_to,
             'type': 'progress',
@@ -804,9 +1036,6 @@ class CMakeWrapperServer:
         request = self.recv()
         if not request:
             return
-        self.cmake.set_build_dir(request['buildDirectory'])
-        self.cmake.set_build_dir(request['buildDirectory'])
-        self.cmake.set_build_dir(request['buildDirectory'])
         self.cmake.set_build_dir(request['buildDirectory'])
         if 'generator' in request:
             self.cmake.set_generator(request['generator'])
@@ -927,11 +1156,11 @@ class CMakeWrapperServer:
         for target_file in self.meson.get_target_files(target):
             sources.append(path.relpath(target_file, path.dirname(target['filename'])))
         file_group = {
-            'isGenerated':  False,
+            'isGenerated': False,
             'sources': sources,
             'compileFlags': ' '.join(self.meson.get_flags(target)),
             'defines': [define[2:] for define in self.meson.get_defines(target)],
-            'includePath':  self.get_include_paths(target),
+            'includePath': self.get_include_paths(target),
             'language': 'CXX' if self.meson.get_compiler(target).endswith('') else 'C'
         }
 

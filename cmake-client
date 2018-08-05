@@ -11,9 +11,10 @@ SERVER_FOOTER = b'\n]== "CMake Server" ==]\n'
 
 
 class CMakeClient:
-    def __init__(self, pipe, gen, build_dir, source_dir=None):
+    def __init__(self, pipe, generator, build_dir, source_dir=None):
+        self.debug = False
         self.pipe = pipe
-        self.gen = gen
+        self.generator = generator
         self.build_dir = build_dir
         self.source_dir = source_dir
         self.sock = None
@@ -29,11 +30,12 @@ class CMakeClient:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
 
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        if self.debug:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
 
     def log(self, msg):
         if isinstance(msg, Exception):
@@ -146,7 +148,7 @@ class CMakeClient:
                 'major': 1
             },
             'buildDirectory': self.build_dir,
-            'generator': self.gen,
+            'generator': self.generator,
         }
         if self.source_dir:
             request['sourceDirectory'] = self.source_dir
@@ -166,34 +168,34 @@ class CMakeClient:
         self.send(request)
 
     def handle_hello(self, response):
-        self.log('Handle Hello')
+        print('Handle Hello')
 
     def handle_message(self, response):
-        self.log('Handle Message')
+        print('Handle Message')
 
     def handle_progress(self, response):
-        self.log('Handle Progress')
+        print('Handle Progress')
 
     def handle_handshake(self, response):
-        self.log('Handle Handshake')
+        print('Handle Handshake')
 
     def handle_configure(self, response):
-        self.log('Handle Configure')
+        print('Handle Configure')
 
     def handle_compute(self, response):
-        self.log('Handle Configure')
+        print('Handle Configure')
 
     def handle_globalsettings(self, response):
-        self.log('Handle Global Settings')
+        print('Handle Global Settings')
 
     def handle_cmakeinputs(self, response):
-        self.log('Handle CMake Inputs')
+        print('Handle CMake Inputs')
 
     def handle_cache(self, response):
-        self.log('Handle Cache')
+        print('Handle Cache')
 
     def handle_codemodel(self, response):
-        self.log('Handle Codemodel')
+        print('Handle Codemodel')
 
 
 if __name__ == '__main__':
