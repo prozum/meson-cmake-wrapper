@@ -35,6 +35,4 @@ Change CMake option to path of meson-cmake-wrapper.
 * Run target
 * Run target with valgrind
 * Debug target
-
-### TODO
 * Autocompletion

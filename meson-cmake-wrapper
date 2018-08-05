@@ -270,7 +270,7 @@ class CMakeWrapper:
     def __init__(self):
         self.version = [3, 10, 0]
         self.path = argv[0]
-        self.debug = False
+        self.debug = True
         self.command = 'generate'
         self.generator = None
         self.build_type = None
@@ -371,11 +371,11 @@ class CMakeWrapper:
         print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.')
 
     def generate_cmd(self):
-        print('Generate to build directory: ' + self.build_dir)
-
         # Set default build dir
         if not self.build_dir:
             self.set_build_dir(getcwd())
+
+        print('Generate to build directory: ' + self.build_dir)
 
         # Set default generator
         if not self.generator:
@@ -400,7 +400,7 @@ class CMakeWrapper:
         # Set default build dir
         if not self.build_dir:
             self.set_build_dir(getcwd())
-        
+
         self.load_cache_entries()
 
         self.meson.build()
