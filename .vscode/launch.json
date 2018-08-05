@@ -14,12 +14,13 @@
             "name": "cmake-client",
             "type": "pythonExperimental",
             "request": "launch",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/cmake-client",
             "args": [
                 "/tmp/cmake-pipe",
                 "Ninja",
-                "${workspaceFolder}/sample-project/build",
-                "${workspaceFolder}/sample-project"
+                "${workspaceFolder}/test/sample-project/build",
+                "${workspaceFolder}/test/sample-project"
             ],
             "debugStdLib": true
         },
@@ -27,19 +28,20 @@
             "name": "cmake-client (no source dir)",
             "type": "pythonExperimental",
             "request": "launch",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/cmake-client",
             "args": [
                 "/tmp/cmake-pipe",
                 "Ninja",
-                "${workspaceFolder}/sample-project/build",
+                "${workspaceFolder}/test/sample-project/build",
             ],
             "debugStdLib": true
         },
         {
             "name": "meson-cmake-wrapper",
-            //"type": "pythonExperimental",
             "type": "python",
             "request": "launch",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "preLaunchTask": "removepipe",
             "args": [
@@ -48,38 +50,47 @@
                 "--pipe=/tmp/cmake-pipe",
                 "--experiment"
             ],
-            "debugStdLib": true
+        },
+        {
+            "name": "meson-cmake-wrapper (cmake-test-run)",
+            "type": "python",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/test/cmake-test-run/build",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "args": [
+                "-G",
+                "Unix Makefiles",
+                "${workspaceFolder}/test/cmake-test-run",
+            ],
         },
         {
             "name": "meson-cmake-wrapper (enviroment)",
-            //"type": "pythonExperimental",
             "type": "python",
             "request": "launch",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-E",
                 "environment",
             ],
-            "debugStdLib": true
         },
         {
             "name": "meson-cmake-wrapper (codeblocks)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/sample-project/build",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-G",
                 "CodeBlocks - Unix Makefiles",
                 ".."
             ],
-            "debugStdLib": true
         },
         {
             "name": "meson-cmake-wrapper (build all)",
             "type": "pythonExperimental",
             "request": "launch",
-            "cwd": "${workspaceFolder}/sample-project/build",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "--build", 

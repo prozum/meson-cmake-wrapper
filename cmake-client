@@ -76,7 +76,7 @@ class CMakeClient:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.pipe)
         self.log('Connected to socket: ' + self.pipe)
-        self.sent_handshake()
+        self.send_handshake()
         self.handle_handshake(self.recv())
 
     def recv(self):
@@ -141,7 +141,7 @@ class CMakeClient:
     def send_codemodel(self):
         self.send_simple('codemodel')
 
-    def sent_handshake(self):
+    def send_handshake(self):
         request = {
             'type': 'handshake',
             'protocolVersion': {
@@ -160,9 +160,8 @@ class CMakeClient:
         request = {
             'type': 'configure',
             'cacheArguments': [
-                '-DTESTVAR=TESTVAL',
+                '-DTESTVAR=NEWVAL',
                 '-DCMAKE_BUILD_TYPE:STRING=Debug',
-                '-DCMAKE_CXX_COMPILER=/usr/bin/clang++-6.0'
             ]
         }
         self.send(request)
