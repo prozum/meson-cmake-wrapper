@@ -786,10 +786,10 @@ class CommandToolWrapper:
             'serverMode': True,
             'version': {
                 'isDirty': False,
-                'major': self.version[0],
-                'minor': self.version[1],
-                'patch': self.version[2],
-                'string': '.'.join(map(str, self.version)),
+                'major': self.cmake.version[0],
+                'minor': self.cmake.version[1],
+                'patch': self.cmake.version[2],
+                'string': '.'.join(map(str, self.cmake.version)),
                 'suffix': ''
             }
         }
@@ -800,7 +800,7 @@ class CommandToolWrapper:
         call(args[1:])
 
     def compare_files_cmd(self, args):
-        if filecmp(args[0], args[1]):
+        if filecmp.cmp(args[0], args[1]):
             exit(0)
         print('Files "%s" to "%s" are different.' % (args[0], args[1]))
         exit(1)
@@ -969,6 +969,15 @@ class ServerWrapper:
                 self.conn.close()
             if self.sock:
                 self.sock.close()
+    
+    def connect(self, args):
+        raise NotImplementedError()
+
+    def recv(self):
+        raise NotImplementedError()
+
+    def send(self, response, log=True):
+        raise NotImplementedError()
 
     def send_reply(self, reply_to, log=True):
         response = {
