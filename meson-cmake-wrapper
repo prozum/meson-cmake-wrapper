@@ -232,6 +232,8 @@ class CMakeWrapper:
                 logger.addHandler(handler)
 
     def log(self, msg):
+        if not self.logger:
+            return
         if isinstance(msg, Exception):
             self.logger.info(msg, exc_info=msg)
         else:
@@ -927,7 +929,6 @@ class ServerWrapper:
         self.logger = None
         self.sock = None
         self.conn = None
-        self.running = False
         self.requests = []
         self.protocol_version = (1, 1)
         self.cookies = {}
@@ -956,10 +957,11 @@ class ServerWrapper:
         except BrokenPipeError:
             self.log('lost connection to client')
         finally:
-            self.running = False
             self.log('closing connection')
-            self.conn.close()
-            self.sock.close()
+            if self.conn:
+                self.conn.close()
+            if self.sock:
+                self.sock.close()
 
     def connect(self, args):
         for arg in args:
@@ -972,7 +974,6 @@ class ServerWrapper:
         self.conn, _ = self.sock.accept()
         self.handle_hello()
         self.handle_handshake()
-        self.running = True
         self.log('running on "%s"' % pipe)
 
     def recv(self):
