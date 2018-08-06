@@ -55,7 +55,7 @@ class CMakeWrapper:
         self.target_args = []
         self.build_dir = None
         self.source_dir = None
-        self.meson = Meson(self)
+        self.meson = Meson()
         if os.name == 'nt':
             self.server = NamedPipeServer(self)
         else:
@@ -189,7 +189,7 @@ class CMakeWrapper:
 
         self.load_cache_entries()
 
-        self.meson.build()
+        self.meson.build(self.target)
 
     def tool_cmd(self):
         self.tool.run(self.command_args)
@@ -499,8 +499,7 @@ class Meson:
     Base class that handles data fetching and setting options for Meson.
     """
 
-    def __init__(self, cmake, path='meson'):
-        self.cmake = cmake
+    def __init__(self, path='meson'):
         self.path = path
         self.backend = None
         self.build_dir = None
@@ -540,8 +539,8 @@ class Meson:
     def setup(self):
         return self.backend.setup()
 
-    def build(self):
-        return self.backend.build()
+    def build(self, target):
+        return self.backend.build(target)
 
     def get_targets(self):
         if self.c_targets:
@@ -689,7 +688,6 @@ class NinjaBackend:
 
     def __init__(self, meson, path='ninja'):
         self.meson = meson
-        self.cmake = meson.cmake
         self.path = path
 
     def call(self, args):
@@ -717,8 +715,8 @@ class NinjaBackend:
     def reconfigure(self):
         return self.call(['-C', self.meson.build_dir, 'reconfigure']) != ''
 
-    def build(self):
-        self.call(['-C', self.meson.build_dir, self.get_target(self.cmake.target)])
+    def build(self, target):
+        self.call(['-C', self.meson.build_dir, self.get_target(target)])
 
     def get_target(self, target_name):
         target = next((t for t in self.meson.get_targets() if t['name'] == target_name), None)
@@ -909,7 +907,7 @@ class CommandToolWrapper:
 
     def sleep_cmd(self, args):
         sleep(float(args[0]))
-    
+
     def tar_cmd(self, args):
         raise NotImplementedError()
 
