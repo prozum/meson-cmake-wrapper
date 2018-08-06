@@ -527,7 +527,8 @@ class Meson:
         child = Popen([self.path] + args, stdout=PIPE)
         output = child.communicate()[0]
         if child.returncode != 0:
-            RuntimeError('Meson call failed:', args, output)
+            print(output.decode("utf-8"))
+            return ''
         return output
 
     def set_backend(self, backend):
@@ -691,27 +692,33 @@ class NinjaBackend:
         self.cmake = meson.cmake
         self.path = path
 
+    def call(self, args):
+        child = Popen([self.path] + args, stdout=PIPE)
+        output = child.communicate()[0]
+        if child.returncode != 0:
+            print(output.decode("utf-8"))
+            return ''
+        return output
+
     def setup(self):
         ninja_file = os.path.join(self.meson.build_dir, 'build.ninja')
         if os.path.exists(ninja_file):
-            self.meson.call(['configure'] + self.meson.get_options() + [self.meson.build_dir])
-            return True
+            return self.reconfigure()
 
         meson_file = os.path.join(self.meson.source_dir, 'meson.build')
         if not os.path.exists(meson_file):
             print('No meson.build in source directory! ' + str(argv) + os.getcwd())
             return False
 
-        if call([self.meson.path, 'setup'] + self.meson.get_options() + [self.meson.source_dir, self.meson.build_dir]) != 0:
-            return False
+        self.meson.call(['setup'] + self.meson.get_options() + [self.meson.source_dir, self.meson.build_dir])
 
         return True
 
     def reconfigure(self):
-        call([self.path, '-C', self.meson.build_dir, 'reconfigure'])
+        return self.call(['-C', self.meson.build_dir, 'reconfigure']) != ''
 
     def build(self):
-        call([self.path, '-C', self.meson.build_dir, self.get_target(self.cmake.target)])
+        self.call(['-C', self.meson.build_dir, self.get_target(self.cmake.target)])
 
     def get_target(self, target_name):
         target = next((t for t in self.meson.get_targets() if t['name'] == target_name), None)
@@ -963,6 +970,8 @@ class ServerWrapper:
                 getattr(self, 'handle_' + request['type'].lower())(request)
         except BrokenPipeError:
             self.log('lost connection to client')
+        except Exception as e:
+            self.log(e)
         finally:
             self.log('closing connection')
             self.cleanup()
