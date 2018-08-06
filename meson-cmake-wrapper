@@ -57,9 +57,9 @@ class CMakeWrapper:
         self.source_dir = None
         self.meson = Meson(self)
         if os.name == 'nt':
-            raise Exception('Windows is not currently supported.')
+            self.server = NamedPipeServer(self)
         else:
-            self.server = UnixServerWrapper(self)
+            self.server = UnixSocketServer(self)
         self.tool = CommandToolWrapper(self)
         self.logger = None
 
@@ -586,7 +586,10 @@ class Meson:
             return self.c_compile_commands_target[id]
 
         if not self.c_compile_commands:
-            json_data = open(os.path.join(self.build_dir, 'compile_commands.json')).read()
+            compile_commands_file = os.path.join(self.build_dir, 'compile_commands.json')
+            if not os.path.exists(compile_commands_file):
+                Exception('No compile_commands.json in build dir')
+            json_data = open(compile_commands_file).read()
             self.c_compile_commands = json.loads(json_data)
 
         # Only way to identify target compiler commands from compile_commands.json
@@ -603,7 +606,7 @@ class Meson:
 
         compile_commands = self.get_compile_commands(target)
         if not compile_commands:
-            return None
+            return ''
 
         return compile_commands['command'].split()[0]
 
@@ -642,7 +645,7 @@ class Meson:
     def get_default_include_directories(self, target=None):
         compiler = self.get_compiler(target)
         if not compiler:
-            Exception('No compile_commands.json in build dir')
+            return []
 
         if compiler.endswith('++'):
             lang = 'c++'
@@ -931,8 +934,6 @@ class ServerWrapper:
         self.meson = cmake.meson
         self.logger = None
         self.pipe = None
-        self.sock = None
-        self.conn = None
         self.requests = []
         self.protocol_version = (1, 1)
         self.cookies = {}
@@ -960,24 +961,60 @@ class ServerWrapper:
                     self.log('unhandled request: "%s"' % request)
                     break
                 getattr(self, 'handle_' + request['type'].lower())(request)
-
         except BrokenPipeError:
             self.log('lost connection to client')
         finally:
             self.log('closing connection')
-            if self.conn:
-                self.conn.close()
-            if self.sock:
-                self.sock.close()
-    
+            self.cleanup()
+
     def connect(self, args):
         raise NotImplementedError()
 
-    def recv(self):
+    def cleanup(self):
         raise NotImplementedError()
 
-    def send(self, response, log=True):
+    def read(self, size):
         raise NotImplementedError()
+
+    def write(self, data):
+        raise NotImplementedError()
+
+    def recv(self):
+        data = b''
+        while True:
+            if any(self.requests):
+                return self.requests.pop(0)
+
+            new_data = self.read(1024)
+            if not new_data:
+                return None
+            data += new_data
+            if data.endswith(SERVER_FOOTER):
+                self.parse_recv(data)
+
+    def send(self, response, log=True):
+        if 'inReplyTo' in response:
+            if response['inReplyTo'] in self.cookies:
+                response['cookie'] = self.cookies[response['inReplyTo']]
+            if log:
+                self.log('%s (%s) "%s"' % (response['inReplyTo'], response['type'], response))
+        elif log:
+            self.log(response)
+
+        response = SERVER_HEADER + json.dumps(response).encode('gbk') + SERVER_FOOTER
+        self.write(response)
+
+    def parse_recv(self, data):
+        requests = data.split(SERVER_FOOTER + SERVER_HEADER)
+        requests[0] = requests[0][len(SERVER_HEADER):]
+        requests[-1] = requests[-1][:-len(SERVER_FOOTER)]
+
+        for request in requests:
+            request = json.loads(request)
+            if 'cookie' in request:
+                self.cookies[request['type']] = request['cookie']
+            self.log('received (%s) "%s"' % (request['type'], request))
+            self.requests.append(request)
 
     def send_reply(self, reply_to, log=True):
         response = {
@@ -1202,9 +1239,11 @@ class ServerWrapper:
         self.send(response)
 
 
-class UnixServerWrapper(ServerWrapper):
+class UnixSocketServer(ServerWrapper):
     def __init__(self, cmake):
         super().__init__(cmake)
+        self.sock = None
+        self.conn = None
 
     def connect(self, args):
         for arg in args:
@@ -1216,39 +1255,34 @@ class UnixServerWrapper(ServerWrapper):
 
         self.conn, _ = self.sock.accept()
 
-    def recv(self):
-        data = b''
-        while True:
-            if any(self.requests):
-                return self.requests.pop(0)
+    def cleanup(self):
+        if self.conn:
+            self.conn.close()
+        if self.sock:
+            self.sock.close()
 
-            new_data = self.conn.recv(1024)
-            if not new_data:
-                return None
-            data += new_data
-            if data.endswith(SERVER_FOOTER):
-                requests = data.split(SERVER_FOOTER + SERVER_HEADER)
-                requests[0] = requests[0][len(SERVER_HEADER):]
-                requests[-1] = requests[-1][:-len(SERVER_FOOTER)]
+    def read(self, size):
+        return self.conn.recv(size)
 
-                for request in requests:
-                    request = json.loads(request)
-                    if 'cookie' in request:
-                        self.cookies[request['type']] = request['cookie']
-                    self.log('received (%s) "%s"' % (request['type'], request))
-                    self.requests.append(request)
+    def write(self, data):
+        self.conn.sendall(data)
 
-    def send(self, response, log=True):
-        if 'inReplyTo' in response:
-            if response['inReplyTo'] in self.cookies:
-                response['cookie'] = self.cookies[response['inReplyTo']]
-            if log:
-                self.log('%s (%s) "%s"' % (response['inReplyTo'], response['type'], response))
-        elif log:
-            self.log(response)
 
-        response = SERVER_HEADER + json.dumps(response).encode('gbk') + SERVER_FOOTER
-        self.conn.sendall(response)
+class NamedPipeServer(ServerWrapper):
+    def __init__(self, cmake):
+        super().__init__(cmake)
+
+    def connect(self, args):
+        raise NotImplementedError()
+
+    def cleanup(self):
+        raise NotImplementedError()
+
+    def read(self, size):
+        raise NotImplementedError()
+
+    def write(self, data):
+        raise NotImplementedError()
 
 
 CMakeWrapper().run(argv)

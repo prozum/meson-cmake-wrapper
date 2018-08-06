@@ -3,7 +3,7 @@ import socket
 import sys
 import json
 import logging
-from os import path
+import os
 from random import random
 
 SERVER_HEADER = b'\n[== "CMake Server" ==[\n'
@@ -17,14 +17,13 @@ class CMakeClient:
         self.generator = generator
         self.build_dir = build_dir
         self.source_dir = source_dir
-        self.sock = None
         self.cookies = {}
         self.responses = []
 
         self.logger = logging.getLogger('CMake Client')
         self.logger.setLevel(logging.INFO)
 
-        handler = logging.FileHandler(path.join(self.build_dir, 'cmake-client.log'))
+        handler = logging.FileHandler(os.path.join(self.build_dir, 'cmake-client.log'))
         handler.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(message)s')
         handler.setFormatter(formatter)
@@ -46,6 +45,9 @@ class CMakeClient:
     def run(self):
         try:
             self.connect()
+            self.handle_hello(self.recv())
+            self.send_handshake()
+            self.handle_handshake(self.recv())
             self.send_configure()
             self.send_compute()
             self.send_globalsettings()
@@ -66,18 +68,24 @@ class CMakeClient:
 
                 response = self.recv()
         except ConnectionRefusedError:
-            self.log('Could not connect to: ' + self.pipe)
+            print('Could not connect to: ' + self.pipe)
         except Exception as e:
             self.log(e)
+            raise e
         finally:
-            self.sock.close()
+            self.cleanup()
 
     def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(self.pipe)
-        self.log('Connected to socket: ' + self.pipe)
-        self.send_handshake()
-        self.handle_handshake(self.recv())
+        raise NotImplementedError()
+
+    def cleanup(self):
+        raise NotImplementedError()
+
+    def read(self, size):
+        raise NotImplementedError()
+
+    def write(self, data):
+        raise NotImplementedError()
 
     def recv(self):
         data = b''
@@ -87,12 +95,20 @@ class CMakeClient:
                 self.check_cookie(response)
                 return response
 
-            new_data = self.sock.recv(1024)
+            new_data = self.read(1024)
             if not new_data:
                 return None
             data += new_data
             if data.endswith(SERVER_FOOTER):
                 self.parse_recv(data)
+
+    def send(self, request):
+        request['cookie'] = str(random())
+        self.cookies[request['type']] = request['cookie']
+
+        self.log('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
+        request = SERVER_HEADER + json.dumps(request).encode('gbk') + SERVER_FOOTER
+        self.write(request)
 
     def parse_recv(self, data):
         responses = data.split(SERVER_FOOTER + SERVER_HEADER)
@@ -111,14 +127,6 @@ class CMakeClient:
         if 'cookie' in response:
             if self.cookies[response['inReplyTo']] != response['cookie']:
                 raise Exception('Wrong cookie returned')
-
-    def send(self, request):
-        request['cookie'] = str(random())
-        self.cookies[request['type']] = request['cookie']
-
-        self.log('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
-        request = SERVER_HEADER + json.dumps(request).encode('gbk') + SERVER_FOOTER
-        self.sock.sendall(request)
 
     def send_simple(self, type):
         request = {
@@ -153,8 +161,6 @@ class CMakeClient:
         if self.source_dir:
             request['sourceDirectory'] = self.source_dir
         self.send(request)
-
-        self.recv()
 
     def send_configure(self):
         request = {
@@ -197,9 +203,51 @@ class CMakeClient:
         print('Handle Codemodel')
 
 
+class UnixSocketClient(CMakeClient):
+    def __init__(self, pipe, generator, build_dir, source_dir=None):
+        super().__init__(pipe, generator, build_dir, source_dir)
+        self.sock = None
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.pipe)
+        self.log('Connected to socket: ' + self.pipe)
+
+    def cleanup(self):
+        self.sock.close()
+
+    def read(self, size):
+        return self.sock.recv(size)
+
+    def write(self, data):
+        self.sock.sendall(data)
+
+
+class NamedPipeClient(CMakeClient):
+    def __init__(self, pipe, generator, build_dir, source_dir=None):
+        super().__init__(pipe, generator, build_dir, source_dir)
+
+    def connect(self):
+        raise NotImplementedError()
+
+    def cleanup(self):
+        raise NotImplementedError()
+
+    def read(self, size):
+        raise NotImplementedError()
+
+    def write(self, data):
+        raise NotImplementedError()
+
+
 if __name__ == '__main__':
-    if len(sys.argv) == 4:
-        pipereader = CMakeClient(sys.argv[1], sys.argv[2], sys.argv[3])
+    if os.name == 'nt':
+        Client = NamedPipeClient
     else:
-        pipereader = CMakeClient(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
+        Client = UnixSocketClient
+
+    if len(sys.argv) == 4:
+        pipereader = Client(sys.argv[1], sys.argv[2], sys.argv[3])
+    else:
+        pipereader = Client(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
     pipereader.run()
