@@ -738,14 +738,14 @@ class CommandToolWrapper:
 
     def list_cmds(self):
         print('CMake Error: cmake version ' + '.'.join(map(str, self.cmake.version)))
-        print('Usage: cmake -E <command> [arguments...]')
+        print('Usage: meson-cmake-wrapper -E <command> [arguments...]')
         print('Available commands:')
         print('  capabilities              - Report capabilities built into cmake in JSON format')
         print('  chdir dir cmd [args...]   - run command in a given directory')
         print('  compare_files file1 file2 - check if file1 is same as file2')
         print('  copy <file>... destination  - copy files to destination (either file or directory)')
         print('  copy_directory <dir>... destination   - copy content of <dir>... directories to \'destination\' directory')
-        print('#  copy_if_different <file>... destination  - copy files if it has changed')
+        print('  copy_if_different <file>... destination  - copy files if it has changed')
         print('  echo [<string>...]        - displays arguments as text')
         print('  echo_append [<string>...] - displays arguments as text but no new line')
         print('  env [--unset=NAME]... [NAME=VALUE]... COMMAND [ARG]...')
@@ -763,7 +763,7 @@ class CommandToolWrapper:
         print('  rename oldname newname    - rename a file or directory (on one volume)')
         print('  server                    - start cmake in server mode')
         print('  sleep <number>...         - sleep for given number of seconds')
-        print('#  tar [cxt][vf][zjJ] file.tar [file/dir1 file/dir2 ...]')
+        print('  tar [cxt][vf][zjJ] file.tar [file/dir1 file/dir2 ...]')
         print('                            - create or extract a tar or zip archive')
         print('  time command [args...]    - run command and return elapsed time')
         print('  touch file                - touch a file.')
@@ -822,6 +822,9 @@ class CommandToolWrapper:
             os.makedirs(dir)
         for file in files:
             copy(file, dir)
+
+    def copy_if_different_cmd(self, args):
+        raise NotImplementedError()
 
     def copy_directory_cmd(self, args):
         cp_dirs = args[:-1]
@@ -906,6 +909,9 @@ class CommandToolWrapper:
 
     def sleep_cmd(self, args):
         sleep(float(args[0]))
+    
+    def tar_cmd(self, args):
+        raise NotImplementedError()
 
     def touch_cmd(self, args):
         with open(args[0], 'a'):
