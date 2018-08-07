@@ -15,7 +15,7 @@
             "type": "pythonExperimental",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/sample-project/build",
-            "program": "${workspaceFolder}/cmake-client",
+            "program": "${workspaceFolder}/test/cmake-client",
             "args": [
                 "/tmp/cmake-pipe",
                 "Ninja",
@@ -29,7 +29,7 @@
             "type": "pythonExperimental",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/sample-project/build",
-            "program": "${workspaceFolder}/cmake-client",
+            "program": "${workspaceFolder}/test/cmake-client",
             "args": [
                 "/tmp/cmake-pipe",
                 "Ninja",
