@@ -96,6 +96,11 @@ class CMakeWrapper:
                 self.command = 'help'
             elif args[i] == '--debug-output':
                 self.debug = True
+            # Undocumented CMake flags -H -B
+            elif args[i].startswith('-H'): 
+                self.set_source_dir(args[i][2:])
+            elif args[i].startswith('-B'): 
+                self.set_build_dir(args[i][2:])
             elif args[i] == '-G':
                 self.command = 'generate'
                 i += 1
