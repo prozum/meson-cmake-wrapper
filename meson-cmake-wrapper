@@ -358,10 +358,6 @@ class CMakeWrapper:
         elif key == 'CROSS_FILE':
             self.meson.cross_file = val
 
-    def update_cache_entries(self):
-        for key, val in self.cache_entries.items():
-            self.update_cache_entry(key, val[0])
-
     def save_cache_entries(self):
         if self.build_dir:
             cache_file = os.path.join(self.build_dir, 'cmake-cache.pk1')
@@ -372,8 +368,12 @@ class CMakeWrapper:
         cache_file = os.path.join(self.build_dir, 'cmake-cache.pk1')
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as input:
-                self.cache_entries = pickle.load(input)
-                self.update_cache_entries()
+                loaded_entries = pickle.load(input)
+                diff_entries = set(loaded_entries) - set(self.cache_entries)
+
+                for key in diff_entries:
+                    self.cache_entries[key] = loaded_entries[key]
+                    self.update_cache_entry(key, loaded_entries[key][0])
         elif self.source_dir:
             self.init_cache_entries()
 

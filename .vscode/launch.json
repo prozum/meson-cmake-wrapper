@@ -87,6 +87,20 @@
             ],
         },
         {
+            "name": "meson-cmake-wrapper (clang)",
+            "type": "python",
+            "request": "launch",
+            "cwd": "${workspaceFolder}/test/sample-project/build",
+            "program": "${workspaceFolder}/meson-cmake-wrapper",
+            "args": [
+                "-DCMAKE_C_COMPILER=clang",
+                "-DCMAKE_CXX_COMPILER=clang++",
+                "-G",
+                "CodeBlocks - Unix Makefiles",
+                ".."
+            ],
+        },
+        {
             "name": "meson-cmake-wrapper (build all)",
             "type": "pythonExperimental",
             "request": "launch",
