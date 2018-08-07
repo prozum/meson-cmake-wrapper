@@ -64,6 +64,9 @@ class CMakeWrapper:
         self.logger = None
 
     def run(self, args):
+        self.log('(argv) "%s"' % argv)
+        self.log('(cwd) "%s"' % os.getcwd())
+
         self.parse_args(args)
 
         # debug_connect()
@@ -253,9 +256,13 @@ class CMakeWrapper:
             raise Exception('Generator not supported: ' + generator)
         self.generator = generator
 
+        self.log('(generator) "%s"' % self.generator)
+
     def set_source_dir(self, source_dir):
         self.source_dir = os.path.abspath(source_dir)
         self.meson.source_dir = self.source_dir
+
+        self.log('(source_dir) "%s"' % self.source_dir)
 
     def set_build_dir(self, build_dir):
         self.build_dir = os.path.abspath(build_dir)
@@ -271,12 +278,8 @@ class CMakeWrapper:
                     file.write('project(\'empty\')')
 
         self.load_cache_entries()
-
-        if self.source_dir:
-            self.log('(argv) "%s"' % argv)
-            self.log('(cwd) "%s"' % os.getcwd())
-            self.log('(build_dir) "%s"' % self.build_dir)
-            self.log('(source_dir) "%s"' % self.source_dir)
+        
+        self.log('(build_dir) "%s"' % self.build_dir)
 
     def set_build_type(self, build_type):
         self.build_type = build_type
@@ -290,6 +293,8 @@ class CMakeWrapper:
             self.meson.build_type = 'minsize'
         else:
             self.meson.build_type = 'plain'
+
+        self.log('(build_type) "%s"' % self.build_type)
 
     def init_cache_entries(self):
         if not self.source_dir:
