@@ -162,6 +162,7 @@ class CMakeWrapper:
         print('The following generators are available on this platform:')
         print('  Unix Makefiles               = Generates standard UNIX makefiles.')
         print('  Ninja                        = Generates build.ninja files.')
+        print('  CodeBlocks - Ninja           = Generates CodeBlocks project files.\n')
         print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.\n')
 
     def generate_cmd(self):
@@ -254,6 +255,8 @@ class CMakeWrapper:
         if generator == 'Ninja':
             self.meson.set_backend('ninja')
         elif generator == 'Unix Makefiles':
+            self.meson.set_backend('ninja')
+        elif generator == 'CodeBlocks - Ninja':
             self.meson.set_backend('ninja')
         elif generator == 'CodeBlocks - Unix Makefiles':
             self.meson.set_backend('ninja')
@@ -398,7 +401,14 @@ class CMakeWrapper:
 
         build = ETree.SubElement(project, 'Build')
 
-        for target in self.meson.get_targets():
+        all_target = {
+            'name': 'all',
+            'id': 'all',
+            'type': 'custom',
+            'filename': ''
+        }
+
+        for target in  [all_target] + self.meson.get_targets():
             build_target = ETree.SubElement(build, 'Target', {'title': target['name']})
             output = os.path.join(self.meson.build_dir, target['filename'])
             output_dir = os.path.split(output)[0]
@@ -425,8 +435,10 @@ class CMakeWrapper:
 
             make_commands = ETree.SubElement(build_target, 'MakeCommands')
             # TODO: lookup path to ninja
-            ETree.SubElement(make_commands, 'Build', {'command': '/usr/bin/ninja ' + target['id']})
-            ETree.SubElement(make_commands, 'CompileFile', {'command': '/usr/bin/ninja ' + target['id']})
+            ETree.SubElement(make_commands, 'Build', {'command': '/usr/bin/ninja -v ' + self.meson.backend.get_target(target['name'])})
+            ETree.SubElement(make_commands, 'CompileFile', {'command': '/usr/bin/ninja -v ' + self.meson.backend.get_target(target['name'])})
+            ETree.SubElement(make_commands, 'Clean', {'command': '/usr/bin/ninja -v clean'})
+            ETree.SubElement(make_commands, 'DistClean', {'command': '/usr/bin/ninja -v clean'})
 
         for target in self.meson.get_targets():
             target_files = self.meson.get_target_files(target)
@@ -445,7 +457,7 @@ class CMakeWrapper:
 
         for file in self.meson.get_buildsystem_files():
             unit = ETree.SubElement(project, 'Unit', {'filename': os.path.join(self.source_dir, file)})
-            ETree.SubElement(unit, 'Option', {'virtualFolder': 'Meson Files'})
+            ETree.SubElement(unit, 'Option', {'virtualFolder': os.path.join('Meson Files', os.path.dirname(file))})
 
         project_file = os.path.join(self.build_dir, self.meson.get_project_info()['name'] + '.cbp')
         tree.write(project_file, 'unicode', True)
@@ -562,13 +574,15 @@ class Meson:
 
     def get_target_files(self, target):
         id = target['id']
+        if id == 'all':
+            return []
         if id in self.c_target_files:
             return self.c_target_files[id]
         output = self.call(['introspect', '--target-files', id, self.build_dir])
 
         self.log('(target files) "%s"' % output)
         # Workaround https://github.com/mesonbuild/meson/issues/2783
-        if output == b'':
+        if output == '':
             return []
 
         self.c_target_files[id] = json.loads(output)
