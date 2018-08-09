@@ -171,15 +171,15 @@ class CMakeWrapper:
         pass  # meson-cmake-wrapper does not support modules
 
     def generate_cmd(self):
+        # Set default generator
+        if not self.generator:
+            self.set_generator('Unix Makefiles')
+
         # Set default build dir
         if not self.build_dir:
             self.set_build_dir(os.getcwd())
 
         print('Generate to build directory: ' + self.build_dir)
-
-        # Set default generator
-        if not self.generator:
-            self.set_generator('Unix Makefiles')
 
         # Make sure meson is setup
         if not self.meson.setup():
