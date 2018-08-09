@@ -96,10 +96,12 @@ class CMakeWrapper:
                 self.command = 'help'
             elif args[i] == '--debug-output':
                 self.debug = True
+            elif args[i] == '--help-module-list':
+                self.command = 'module_list'
             # Undocumented CMake flags -H -B
-            elif args[i].startswith('-H'): 
+            elif args[i].startswith('-H'):
                 self.set_source_dir(args[i][2:])
-            elif args[i].startswith('-B'): 
+            elif args[i].startswith('-B'):
                 self.set_build_dir(args[i][2:])
             elif args[i] == '-G':
                 self.command = 'generate'
@@ -164,6 +166,9 @@ class CMakeWrapper:
         print('  Ninja                        = Generates build.ninja files.')
         print('  CodeBlocks - Ninja           = Generates CodeBlocks project files.\n')
         print('  CodeBlocks - Unix Makefiles  = Generates CodeBlocks project files.\n')
+
+    def module_list_cmd(self):
+        pass  # meson-cmake-wrapper does not support modules
 
     def generate_cmd(self):
         # Set default build dir
@@ -267,14 +272,25 @@ class CMakeWrapper:
         self.log('(generator) "%s"' % self.generator)
 
     def set_source_dir(self, source_dir):
+        if not os.path.exists(source_dir):
+            raise Exception('No such source directory: ' + source_dir)
+        if not os.path.isdir(source_dir):
+            raise Exception('Source directory path is not a directory: ' + source_dir)
+
         self.source_dir = os.path.abspath(source_dir)
         self.meson.source_dir = self.source_dir
 
         self.log('(source_dir) "%s"' % self.source_dir)
 
     def set_build_dir(self, build_dir):
+        if not os.path.exists(build_dir):
+            raise Exception('No such build directory: ' + build_dir)
+        if not os.path.isdir(build_dir):
+            raise Exception('Build directory path is not a directory: ' + build_dir)
+
         self.build_dir = os.path.abspath(build_dir)
         self.meson.build_dir = self.build_dir
+
         self.init_logging()
 
         # Handle cmake_test_run (CLion)
@@ -286,7 +302,6 @@ class CMakeWrapper:
                     file.write('project(\'empty\')')
 
         self.load_cache_entries()
-        
         self.log('(build_dir) "%s"' % self.build_dir)
 
     def set_build_type(self, build_type):
@@ -304,6 +319,9 @@ class CMakeWrapper:
 
         self.log('(build_type) "%s"' % self.build_type)
 
+    def get_entry(self, entry):
+        return self.cache_entries[entry][0]
+
     def init_cache_entries(self):
         if not self.source_dir:
             raise Exception('Source dir not provided')
@@ -312,6 +330,8 @@ class CMakeWrapper:
         cache_entries = {
             'CMAKE_EXPORT_COMPILE_COMMANDS': ('YES', 'BOOL'),
             'CMAKE_INSTALL_PREFIX': ('/usr/local', 'PATH'),
+            'CMAKE_RANLIB': ('/usr/bin/ranlib', 'FILEPATH'),
+            'CMAKE_AR': ('/usr/bin/ar', 'FILEPATH'),
             'CMAKE_PROJECT_NAME': (self.meson.get_project_info()['name'], 'STATIC'),
             '%s_BINARY_DIR' % self.meson.get_project_info()['name']: (self.build_dir, 'STATIC'),
             '%s_SOURCE_DIR' % self.meson.get_project_info()['name']: (self.source_dir, 'STATIC'),
@@ -408,7 +428,7 @@ class CMakeWrapper:
             'filename': ''
         }
 
-        for target in  [all_target] + self.meson.get_targets():
+        for target in [all_target] + self.meson.get_targets():
             build_target = ETree.SubElement(build, 'Target', {'title': target['name']})
             output = os.path.join(self.meson.build_dir, target['filename'])
             output_dir = os.path.split(output)[0]
@@ -476,9 +496,15 @@ class CMakeWrapper:
         with open(os.path.join(version_cmakefiles_dir, 'CMakeCXXCompiler.cmake'), 'w') as file:
             file.write('set(CMAKE_CXX_COMPILER "/usr/bin/c++")')
 
-        # CLion requires that Makefile.cmake exists
+        # CLion requires Makefile.cmake
         with open(os.path.join(root_cmakefiles_dir, 'Makefile.cmake'), 'w') as file:
-            file.write('')
+            file.write('set(CMAKE_DEPENDS_GENERATOR "%s")\n' % self.generator)
+            file.write('set(CMAKE_DEPEND_INFO_FILES\n')
+            for target in self.meson.get_targets():
+                target_depend = os.path.join(os.path.dirname(target['filename']), 'CMakeFiles',
+                                             target['name'] + '.dir', 'DependInfo.cmake')
+                file.write('  "%s"\n' % target_depend)
+            file.write('  )')
 
         # CLion fetches target directories from TargetDirectories.txt
         with open(os.path.join(root_cmakefiles_dir, 'TargetDirectories.txt'), 'w') as target_dir_file:
@@ -486,18 +512,30 @@ class CMakeWrapper:
 
             for target in targets:
                 # All directories under the build directory should have a CMakeFiles directory
-                cmakefiles_dir = os.path.join(self.build_dir, os.path.split(target['filename'])[0], 'CMakeFiles')
+                cmakefiles_dir = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles')
                 Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
 
                 # CLion fetches target name from TARGET_NAME.dir directories
-                target_path = os.path.join(self.build_dir, os.path.split(target['filename'])[0], 'CMakeFiles',
+                target_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles',
                                            target['name'] + '.dir')
                 target_dir_file.write(target_path + '\n')
                 Path(target_path).mkdir(exist_ok=True)
 
-                # CLion requires that TARGET_PATH/DependInfo.cmake exists
+                # CLion requires TARGET_PATH/DependInfo.cmake
                 with open(os.path.join(target_path, 'DependInfo.cmake'), 'w') as depend_file:
                     depend_file.write('')
+                    depend_file.write('set(CMAKE_DEPENDS_CHECK_CXX\n')
+                    for target_file in self.meson.get_target_files(target):
+                        object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
+                        depend_file.write('  "%s" "%s"\n' % (os.path.join(self.source_dir, target_file), object_path))
+                    depend_file.write('  )')
+
+                # CLion requires TARGET_PATH/link.txt
+                with open(os.path.join(target_path, 'link.txt'), 'w') as link_file:
+                    link_file.write('%s qc %s ' % (self.get_entry('CMAKE_AR'), os.path.basename(target['filename'])))
+                    for target_file in self.meson.get_target_files(target):
+                        link_file.write('%s ' % os.path.join(os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o'))
+                    link_file.write('\n%s %s' % (self.get_entry('CMAKE_RANLIB'), os.path.basename(target['filename'])))
 
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(os.path.join(target_path, 'build.make'), 'w') as build_file:
