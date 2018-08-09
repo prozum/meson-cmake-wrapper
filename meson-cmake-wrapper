@@ -183,7 +183,7 @@ class CMakeWrapper:
 
         # Make sure meson is setup
         if not self.meson.setup():
-            return
+            os.exit(1)
 
         # Create CMakeCache.txt
         self.gen_cmake_cache()
@@ -195,14 +195,15 @@ class CMakeWrapper:
             self.gen_codeblocks_project()
 
     def build_cmd(self):
-        print('Building target: ' + self.target)
-
         # Set default build dir
         if not self.build_dir:
             self.set_build_dir(os.getcwd())
 
-        self.load_cache_entries()
+        # Make sure meson is setup
+        if not self.meson.setup():
+            os.exit(1)
 
+        print('Building target: ' + self.target)
         self.meson.build(self.target)
 
     def tool_cmd(self):
@@ -597,7 +598,10 @@ class Meson:
             raise Exception('Backend not supported: ' + backend)
 
     def setup(self):
-        return self.backend.setup()
+        if not (self.backend and self.backend.setup()):
+            print('Build is not initilized')
+            return False
+        return True
 
     def build(self, target):
         return self.backend.build(target)
@@ -1139,7 +1143,6 @@ class ServerWrapper:
             self.cmake.set_generator(request['generator'])
         if 'sourceDirectory' in request:
             self.cmake.set_source_dir(request['sourceDirectory'])
-        self.cmake.load_cache_entries()
 
         self.send_reply('handshake')
 
