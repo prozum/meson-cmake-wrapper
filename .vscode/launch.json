@@ -17,7 +17,7 @@
             "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/test/cmake-client",
             "args": [
-                "/tmp/cmake-pipe",
+                "${workspaceFolder}/test/sample-project/build/cmake-pipe",
                 "Ninja",
                 "${workspaceFolder}/test/sample-project/build",
                 "${workspaceFolder}/test/sample-project"
@@ -31,7 +31,7 @@
             "cwd": "${workspaceFolder}/test/sample-project/build",
             "program": "${workspaceFolder}/test/cmake-client",
             "args": [
-                "/tmp/cmake-pipe",
+                "${workspaceFolder}/test/sample-project/build/cmake-pipe",
                 "Ninja",
                 "${workspaceFolder}/test/sample-project/build",
             ],
@@ -47,7 +47,7 @@
             "args": [
                 "-E",
                 "server",
-                "--pipe=/tmp/cmake-pipe",
+                "--pipe=${workspaceFolder}/test/sample-project/build/cmake-pipe",
                 "--experiment"
             ],
         },
