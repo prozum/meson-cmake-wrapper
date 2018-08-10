@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ETree
 import filecmp
 import hashlib
 import os
+import sys
 from shutil import copy, copytree, rmtree
 from pathlib import Path
 from subprocess import call, Popen, PIPE, DEVNULL
@@ -183,7 +184,7 @@ class CMakeWrapper:
 
         # Make sure meson is setup
         if not self.meson.setup():
-            os.exit(1)
+            sys.exit(1)
 
         # Create CMakeCache.txt
         self.gen_cmake_cache()
@@ -201,7 +202,7 @@ class CMakeWrapper:
 
         # Make sure meson is setup
         if not self.meson.setup():
-            os.exit(1)
+            sys.exit(1)
 
         print('Building target: ' + self.target)
         self.meson.build(self.target)
