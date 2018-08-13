@@ -80,11 +80,13 @@ class CMakeWrapper:
         # Run command
         try:
             getattr(self, self.command + '_cmd')()
+        except RuntimeError as e:
+            self.log(e)
+            exit(1)
         except Exception as e:
             self.log(e)
             raise e
-        finally:
-            self.save_cache_entries()
+        self.save_cache_entries()
 
     def parse_args(self, args):
         if len(args) == 1:
@@ -183,8 +185,7 @@ class CMakeWrapper:
         print('Generate to build directory: ' + self.build_dir)
 
         # Make sure meson is setup
-        if not self.meson.setup():
-            sys.exit(1)
+        self.meson.setup()
 
         # Create CMakeCache.txt
         self.gen_cmake_cache()
@@ -201,8 +202,7 @@ class CMakeWrapper:
             self.set_build_dir(os.getcwd())
 
         # Make sure meson is setup
-        if not self.meson.setup():
-            sys.exit(1)
+        self.meson.setup()
 
         print('Building target: ' + self.target)
         self.meson.build(self.target)
@@ -327,6 +327,7 @@ class CMakeWrapper:
     def init_cache_entries(self):
         if not self.source_dir:
             raise Exception('Source dir not provided')
+        
         self.meson.setup()
 
         cache_entries = {
@@ -589,7 +590,7 @@ class Meson:
         output = child.communicate()[0]
         if child.returncode != 0:
             print(output.decode("utf-8"))
-            return ''
+            raise RuntimeError(output.decode("utf-8"))
         return output
 
     def set_backend(self, backend):
@@ -599,10 +600,10 @@ class Meson:
             raise Exception('Backend not supported: ' + backend)
 
     def setup(self):
-        if not (self.backend and self.backend.setup()):
+        if not self.backend:
             print('Build is not initilized')
-            return False
-        return True
+            raise RuntimeError('Build is not initilized')
+        self.backend.setup()
 
     def build(self, target):
         return self.backend.build(target)
@@ -612,6 +613,7 @@ class Meson:
             return self.c_targets
 
         output = self.call(['introspect', '--targets', self.build_dir])
+        self.log('(targets) "%s"' % output)
         self.c_targets = json.loads(output)
         return self.c_targets
 
@@ -621,9 +623,10 @@ class Meson:
             return []
         if id in self.c_target_files:
             return self.c_target_files[id]
-        output = self.call(['introspect', '--target-files', id, self.build_dir])
 
+        output = self.call(['introspect', '--target-files', id, self.build_dir])
         self.log('(target files) "%s"' % output)
+
         # Workaround https://github.com/mesonbuild/meson/issues/2783
         if output == '':
             return []
@@ -762,25 +765,25 @@ class NinjaBackend:
         output = child.communicate()[0]
         if child.returncode != 0:
             print(output.decode("utf-8"))
-            return ''
+            raise RuntimeError(output.decode("utf-8"))
         return output
 
     def setup(self):
         ninja_file = os.path.join(self.meson.build_dir, 'build.ninja')
         if os.path.exists(ninja_file):
-            return self.reconfigure()
+            self.reconfigure()
+            return
 
         meson_file = os.path.join(self.meson.source_dir, 'meson.build')
         if not os.path.exists(meson_file):
-            print('No meson.build in source directory! ' + str(argv) + os.getcwd())
-            return False
+            msg = 'No meson.build in source directory! ' + str(argv) + os.getcwd()
+            print(msg)
+            raise RuntimeError(msg)
 
         self.meson.call(['setup'] + self.meson.get_options() + [self.meson.source_dir, self.meson.build_dir])
 
-        return True
-
     def reconfigure(self):
-        return self.call(['-C', self.meson.build_dir, 'reconfigure']) != ''
+        self.call(['-C', self.meson.build_dir, 'reconfigure'])
 
     def build(self, target):
         self.call(['-C', self.meson.build_dir, self.get_target(target)])
