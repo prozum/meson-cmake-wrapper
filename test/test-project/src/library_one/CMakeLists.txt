@@ -1,0 +1,1 @@
+add_library(library_one SHARED library-one.cpp library-support.cpp)

@@ -1,1 +1,0 @@
-library = library('library', 'library.cpp', 'library-support.cpp')
