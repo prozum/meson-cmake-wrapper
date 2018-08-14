@@ -1,1 +1,1 @@
-add_library(library_two SHARED library.cpp library-two.cpp)
+add_library(library_two SHARED library-two.cpp)
