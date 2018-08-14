@@ -65,12 +65,14 @@ class CMakeWrapper:
         self.logger = None
 
     def run(self, args):
+        self.init_logging()
+
         self.log('(argv) "%s"' % argv)
         self.log('(cwd) "%s"' % os.getcwd())
+        
+        # debug_connect()
 
         self.parse_args(args)
-
-        # debug_connect()
 
         # Unknown command
         if not hasattr(self, self.command + '_cmd'):
@@ -210,7 +212,7 @@ class CMakeWrapper:
     def tool_cmd(self):
         self.tool.run(self.command_args)
 
-    def init_logging(self):
+    def init_logging(self, dir=None):
         # Setup loggers
         loggers = []
         self.logger = logging.getLogger('CMake Wrapper')
@@ -224,13 +226,17 @@ class CMakeWrapper:
         for logger in loggers:
             logger.handlers = []
 
+        if not dir and self.debug:
+            dir = os.getcwd()
+
         # Setup handlers and formatters
         handlers = []
-        handler = logging.FileHandler(os.path.join(self.build_dir, 'meson-cmake-wrapper.log'))
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s: %(message)s')
-        handler.setFormatter(formatter)
-        handlers.append(handler)
+        if dir:
+            handler = logging.FileHandler(os.path.join(dir, 'meson-cmake-wrapper.log'))
+            handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(name)s: %(message)s')
+            handler.setFormatter(formatter)
+            handlers.append(handler)
 
         if self.debug:
             handler = logging.StreamHandler(stderr)
@@ -251,8 +257,6 @@ class CMakeWrapper:
                 logger.addHandler(handler)
 
     def log(self, msg):
-        if not self.logger:
-            return
         if isinstance(msg, Exception):
             self.logger.info(msg, exc_info=msg)
         else:
@@ -293,7 +297,7 @@ class CMakeWrapper:
         self.build_dir = os.path.abspath(build_dir)
         self.meson.build_dir = self.build_dir
 
-        self.init_logging()
+        self.init_logging(build_dir)
 
         # Handle cmake_test_run (CLion)
         if self.source_dir:
@@ -386,6 +390,7 @@ class CMakeWrapper:
 
     def save_cache_entries(self):
         if self.build_dir:
+            self.load_cache_entries()
             cache_file = os.path.join(self.build_dir, 'cmake-cache.pk1')
             with open(cache_file, 'wb') as output:
                 pickle.dump(self.cache_entries, output, pickle.HIGHEST_PROTOCOL)
@@ -746,7 +751,7 @@ class Meson:
         meson_options = []
 
         if self.cross_file:
-            meson_options + ['--cross-file', self.cross_file]
+            meson_options += ['--cross-file', self.cross_file]
 
         return meson_options
 
@@ -1001,7 +1006,7 @@ class ServerLogHandler(logging.Handler):
 
     def emit(self, record):
         log_entry = self.format(record)
-        if self.server.conn:
+        if self.server.connected:
             self.server.send_message(log_entry, log=False)
 
 
@@ -1015,13 +1020,12 @@ class ServerWrapper:
         self.meson = cmake.meson
         self.logger = None
         self.pipe = None
+        self.connected = False
         self.requests = []
         self.protocol_version = (1, 1)
         self.cookies = {}
 
     def log(self, msg):
-        if not self.logger:
-            return
         if isinstance(msg, Exception):
             self.logger.info(msg, exc_info=msg)
         else:
@@ -1030,12 +1034,14 @@ class ServerWrapper:
     def run(self, args):
         try:
             self.connect(args)
+            self.connected = True
             self.handle_hello()
             self.handle_handshake()
             self.log('running on "%s"' % self.pipe)
             while 1:
                 request = self.recv()
                 if not request:
+                    self.connected = False
                     break
 
                 if not hasattr(self, 'handle_' + request['type'].lower()):
@@ -1043,9 +1049,8 @@ class ServerWrapper:
                     break
                 getattr(self, 'handle_' + request['type'].lower())(request)
         except BrokenPipeError:
+            self.connected = False
             self.log('lost connection to client')
-        except Exception as e:
-            self.log(e)
         finally:
             self.log('closing connection')
             self.cleanup()
