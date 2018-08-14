@@ -83,6 +83,7 @@ class CMakeWrapper:
         try:
             getattr(self, self.command + '_cmd')()
         except RuntimeError as e:
+            print(e.args[0])
             self.log(e)
             exit(1)
         except Exception as e:
@@ -590,25 +591,38 @@ class Meson:
         else:
             self.logger.info(msg)
 
-    def call(self, args):
+    def call(self, args, show=False):
         child = Popen([self.path] + args, stdout=PIPE)
-        output = child.communicate()[0]
-        if child.returncode != 0:
-            print(output.decode("utf-8"))
-            raise RuntimeError(output.decode("utf-8"))
-        return output
+        fulloutput = b''
+        while True:
+            output = child.stdout.readline()
+            if output == b'' and child.poll() is not None:
+                break
+            if output:
+                if show:
+                    print(output.decode("utf-8"), end='')
+                fulloutput += output
+        if child.poll() != 0:
+            raise RuntimeError(fulloutput.decode("utf-8"))
+        return fulloutput
 
     def set_backend(self, backend):
         if backend == 'ninja':
             self.backend = NinjaBackend(self)
         else:
-            raise Exception('Backend not supported: ' + backend)
+            raise RuntimeError('Backend not supported: ' + backend)
 
     def setup(self):
         if not self.backend:
-            print('Build is not initilized')
             raise RuntimeError('Build is not initilized')
-        self.backend.setup()
+        if self.backend.setup():
+            return
+
+        meson_file = os.path.join(self.source_dir, 'meson.build')
+        if not os.path.exists(meson_file):
+            raise RuntimeError('No meson.build in source directory!')
+
+        self.call(['setup'] + self.get_options() + [self.source_dir, self.build_dir], True)
 
     def build(self, target):
         return self.backend.build(target)
@@ -765,33 +779,33 @@ class NinjaBackend:
         self.meson = meson
         self.path = path
 
-    def call(self, args):
+    def call(self, args, show=False):
         child = Popen([self.path] + args, stdout=PIPE)
-        output = child.communicate()[0]
-        if child.returncode != 0:
-            print(output.decode("utf-8"))
-            raise RuntimeError(output.decode("utf-8"))
-        return output
+        fulloutput = b''
+        while True:
+            output = child.stdout.readline()
+            if output == b'' and child.poll() is not None:
+                break
+            if output:
+                if show:
+                    print(output.decode("utf-8"), end='')
+                fulloutput += output
+        if child.poll() != 0:
+            raise RuntimeError(fulloutput.decode("utf-8"))
+        return fulloutput
 
     def setup(self):
         ninja_file = os.path.join(self.meson.build_dir, 'build.ninja')
         if os.path.exists(ninja_file):
             self.reconfigure()
-            return
-
-        meson_file = os.path.join(self.meson.source_dir, 'meson.build')
-        if not os.path.exists(meson_file):
-            msg = 'No meson.build in source directory! ' + str(argv) + os.getcwd()
-            print(msg)
-            raise RuntimeError(msg)
-
-        self.meson.call(['setup'] + self.meson.get_options() + [self.meson.source_dir, self.meson.build_dir])
+            return True
+        return False
 
     def reconfigure(self):
-        self.call(['-C', self.meson.build_dir, 'reconfigure'])
+        self.call(['-C', self.meson.build_dir, 'reconfigure'], True)
 
     def build(self, target):
-        self.call(['-C', self.meson.build_dir, self.get_target(target)])
+        self.call(['-C', self.meson.build_dir, self.get_target(target)], True)
 
     def get_target(self, target_name):
         target = next((t for t in self.meson.get_targets() if t['name'] == target_name), None)
