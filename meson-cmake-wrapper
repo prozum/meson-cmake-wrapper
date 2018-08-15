@@ -9,6 +9,7 @@ import filecmp
 import hashlib
 import os
 import sys
+from distutils.spawn import find_executable
 from shutil import copy, copytree, rmtree
 from pathlib import Path
 from subprocess import call, Popen, PIPE, DEVNULL
@@ -38,6 +39,12 @@ def debug_connect():
     ptvsd.wait_for_attach()
     return True
 
+def find_executables(file_names):
+    for file_name in file_names:
+        res = find_executable(file_name)
+        if res:
+            return res
+    raise RuntimeError('Executables "%s" not found in path.' % file_names)
 
 class CMakeWrapper:
     """
@@ -188,6 +195,7 @@ class CMakeWrapper:
         print('Generate to build directory: ' + self.build_dir)
 
         # Make sure meson is setup
+        self.load_cache_entries()
         self.meson.setup()
 
         # Create CMakeCache.txt
@@ -205,6 +213,7 @@ class CMakeWrapper:
             self.set_build_dir(os.getcwd())
 
         # Make sure meson is setup
+        self.load_cache_entries()
         self.meson.setup()
 
         print('Building target: ' + self.target)
@@ -280,9 +289,9 @@ class CMakeWrapper:
 
     def set_source_dir(self, source_dir):
         if not os.path.exists(source_dir):
-            raise Exception('No such source directory: ' + source_dir)
+            raise RuntimeError('No such source directory: ' + source_dir)
         if not os.path.isdir(source_dir):
-            raise Exception('Source directory path is not a directory: ' + source_dir)
+            raise RuntimeError('Source directory path is not a directory: ' + source_dir)
 
         self.source_dir = os.path.abspath(source_dir)
         self.meson.source_dir = self.source_dir
@@ -291,9 +300,9 @@ class CMakeWrapper:
 
     def set_build_dir(self, build_dir):
         if not os.path.exists(build_dir):
-            raise Exception('No such build directory: ' + build_dir)
+            raise RuntimeError('No such build directory: ' + build_dir)
         if not os.path.isdir(build_dir):
-            raise Exception('Build directory path is not a directory: ' + build_dir)
+            raise RuntimeError('Build directory path is not a directory: ' + build_dir)
 
         self.build_dir = os.path.abspath(build_dir)
         self.meson.build_dir = self.build_dir
@@ -308,7 +317,6 @@ class CMakeWrapper:
                 with open(meson_file, 'w') as file:
                     file.write('project(\'empty\')')
 
-        self.load_cache_entries()
         self.log('(build_dir) "%s"' % self.build_dir)
 
     def set_build_type(self, build_type):
@@ -323,6 +331,8 @@ class CMakeWrapper:
             self.meson.build_type = 'minsize'
         else:
             self.meson.build_type = 'plain'
+        
+        self.cache_entries['CMAKE_BUILD_TYPE'] = (build_type, 'STRING')
 
         self.log('(build_type) "%s"' % self.build_type)
 
@@ -338,8 +348,10 @@ class CMakeWrapper:
         cache_entries = {
             'CMAKE_EXPORT_COMPILE_COMMANDS': ('YES', 'BOOL'),
             'CMAKE_INSTALL_PREFIX': ('/usr/local', 'PATH'),
-            'CMAKE_RANLIB': ('/usr/bin/ranlib', 'FILEPATH'),
-            'CMAKE_AR': ('/usr/bin/ar', 'FILEPATH'),
+            'CMAKE_C_COMPILER': (find_executables(['cc', 'gcc', 'clang']), 'FILEPATH'),
+            'CMAKE_CXX_COMPILER': (find_executables(['c++', 'g++', 'clang++']), 'FILEPATH'),
+            'CMAKE_RANLIB': (find_executables(['ranlib']), 'FILEPATH'),
+            'CMAKE_AR': (find_executables(['ar']), 'FILEPATH'),
             'CMAKE_PROJECT_NAME': (self.meson.get_project_info()['name'], 'STATIC'),
             '%s_BINARY_DIR' % self.meson.get_project_info()['name']: (self.build_dir, 'STATIC'),
             '%s_SOURCE_DIR' % self.meson.get_project_info()['name']: (self.source_dir, 'STATIC'),
@@ -391,7 +403,6 @@ class CMakeWrapper:
 
     def save_cache_entries(self):
         if self.build_dir:
-            self.load_cache_entries()
             cache_file = os.path.join(self.build_dir, 'cmake-cache.pk1')
             with open(cache_file, 'wb') as output:
                 pickle.dump(self.cache_entries, output, pickle.HIGHEST_PROTOCOL)
@@ -406,7 +417,7 @@ class CMakeWrapper:
                 for key in diff_entries:
                     self.cache_entries[key] = loaded_entries[key]
                     self.update_cache_entry(key, loaded_entries[key][0])
-        elif self.source_dir:
+        elif self.build_dir:
             self.init_cache_entries()
 
     def gen_cmake_cache(self):
@@ -464,10 +475,10 @@ class CMakeWrapper:
 
             make_commands = ETree.SubElement(build_target, 'MakeCommands')
             # TODO: lookup path to ninja
-            ETree.SubElement(make_commands, 'Build', {'command': '/usr/bin/ninja -v ' + self.meson.backend.get_target(target['name'])})
-            ETree.SubElement(make_commands, 'CompileFile', {'command': '/usr/bin/ninja -v ' + self.meson.backend.get_target(target['name'])})
-            ETree.SubElement(make_commands, 'Clean', {'command': '/usr/bin/ninja -v clean'})
-            ETree.SubElement(make_commands, 'DistClean', {'command': '/usr/bin/ninja -v clean'})
+            ETree.SubElement(make_commands, 'Build', {'command': self.meson.backend.path + ' -v ' + self.meson.backend.get_target(target['name'])})
+            ETree.SubElement(make_commands, 'CompileFile', {'command': self.meson.backend.path + ' -v ' + self.meson.backend.get_target(target['name'])})
+            ETree.SubElement(make_commands, 'Clean', {'command': self.meson.backend.path + ' -v clean'})
+            ETree.SubElement(make_commands, 'DistClean', {'command': self.meson.backend.path + ' -v clean'})
 
         for target in self.meson.get_targets():
             target_files = self.meson.get_target_files(target)
@@ -501,9 +512,9 @@ class CMakeWrapper:
         if not os.path.exists(version_cmakefiles_dir):
             os.mkdir(version_cmakefiles_dir)
         with open(os.path.join(version_cmakefiles_dir, 'CMakeCCompiler.cmake'), 'w') as file:
-            file.write('set(CMAKE_C_COMPILER "/usr/bin/cc")')
+            file.write('set(CMAKE_C_COMPILER "%s")' % self.get_entry('CMAKE_C_COMPILER'))
         with open(os.path.join(version_cmakefiles_dir, 'CMakeCXXCompiler.cmake'), 'w') as file:
-            file.write('set(CMAKE_CXX_COMPILER "/usr/bin/c++")')
+            file.write('set(CMAKE_CXX_COMPILER "%s")' % self.get_entry('CMAKE_CXX_COMPILER'))
 
         # CLion requires Makefile.cmake
         with open(os.path.join(root_cmakefiles_dir, 'Makefile.cmake'), 'w') as file:
@@ -1166,6 +1177,8 @@ class ServerWrapper:
             self.cmake.set_generator(request['generator'])
         if 'sourceDirectory' in request:
             self.cmake.set_source_dir(request['sourceDirectory'])
+        
+        self.cmake.load_cache_entries()
 
         self.send_reply('handshake')
 
