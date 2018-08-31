@@ -350,6 +350,7 @@ class CMakeWrapper:
             'CMAKE_INSTALL_PREFIX': ('/usr/local', 'PATH'),
             'CMAKE_C_COMPILER': (find_executables(['cc', 'gcc', 'clang']), 'FILEPATH'),
             'CMAKE_CXX_COMPILER': (find_executables(['c++', 'g++', 'clang++']), 'FILEPATH'),
+            'CMAKE_MAKE_PROGRAM': (find_executables(['make']), 'FILEPATH'),
             'CMAKE_RANLIB': (find_executables(['ranlib']), 'FILEPATH'),
             'CMAKE_AR': (find_executables(['ar']), 'FILEPATH'),
             'CMAKE_PROJECT_NAME': (self.meson.get_project_info()['name'], 'STATIC'),
