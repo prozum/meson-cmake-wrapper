@@ -543,11 +543,14 @@ class CMakeWrapper:
 
                 # CLion requires TARGET_PATH/DependInfo.cmake
                 with open(os.path.join(target_path, 'DependInfo.cmake'), 'w') as depend_file:
-                    depend_file.write('')
                     depend_file.write('set(CMAKE_DEPENDS_CHECK_CXX\n')
                     for target_file in self.meson.get_target_files(target):
                         object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
                         depend_file.write('  "%s" "%s"\n' % (os.path.join(self.source_dir, target_file), object_path))
+                    depend_file.write('  )\n')
+                    depend_file.write('set(CMAKE_CXX_TARGET_INCLUDE_PATH\n')
+                    for inc_dir in self.meson.get_include_directories(target, False):
+                        depend_file.write('  "%s"\n' % inc_dir)
                     depend_file.write('  )')
 
                 # CLion requires TARGET_PATH/link.txt
