@@ -39,12 +39,14 @@ def debug_connect():
     ptvsd.wait_for_attach()
     return True
 
+
 def find_executables(file_names):
     for file_name in file_names:
         res = find_executable(file_name)
         if res:
             return res
     raise RuntimeError('Executables "%s" not found in path.' % file_names)
+
 
 class CMakeWrapper:
     """
@@ -63,6 +65,7 @@ class CMakeWrapper:
         self.target_args = []
         self.build_dir = None
         self.source_dir = None
+        self.gen_cmake = False
         self.meson = Meson()
         if os.name == 'nt':
             self.server = NamedPipeServer(self)
@@ -76,7 +79,7 @@ class CMakeWrapper:
 
         self.log('(argv) "%s"' % argv)
         self.log('(cwd) "%s"' % os.getcwd())
-        
+
         # debug_connect()
 
         self.parse_args(args)
@@ -200,6 +203,9 @@ class CMakeWrapper:
 
         # Create CMakeCache.txt
         self.gen_cmake_cache()
+
+        if self.gen_cmake:
+            self.gen_cmake_project()
 
         if self.generator.endswith('Unix Makefiles'):
             self.gen_make_project()
@@ -331,23 +337,26 @@ class CMakeWrapper:
             self.meson.build_type = 'minsize'
         else:
             self.meson.build_type = 'plain'
-        
+
         self.cache_entries['CMAKE_BUILD_TYPE'] = (build_type, 'STRING')
 
         self.log('(build_type) "%s"' % self.build_type)
 
     def get_entry(self, entry):
-        return self.cache_entries[entry][0]
+        if entry in self.cache_entries:
+            return self.cache_entries[entry][0]
+        else:
+            return None
 
     def init_cache_entries(self):
         if not self.source_dir:
             raise Exception('Source dir not provided')
-        
+
         self.meson.setup()
 
         cache_entries = {
             'CMAKE_EXPORT_COMPILE_COMMANDS': ('YES', 'BOOL'),
-            'CMAKE_INSTALL_PREFIX': ('/usr/local', 'PATH'),
+            'CMAKE_INSTALL_PREFIX': ('c:/Program Files' if os.name == 'nt' else '/usr/local', 'PATH'),
             'CMAKE_C_COMPILER': (find_executables(['cc', 'gcc', 'clang']), 'FILEPATH'),
             'CMAKE_CXX_COMPILER': (find_executables(['c++', 'g++', 'clang++']), 'FILEPATH'),
             'CMAKE_MAKE_PROGRAM': (find_executables(['make']), 'FILEPATH'),
@@ -401,6 +410,9 @@ class CMakeWrapper:
         # Use CMake variable 'CROSS_FILE' for setting Meson cross-file
         elif key == 'CROSS_FILE':
             self.meson.cross_file = val
+        # Use CMake variable 'GEN_CMAKE' to toggle cmake project generation
+        elif key == 'GEN_CMAKE':
+            self.gen_cross = True
 
     def save_cache_entries(self):
         if self.build_dir:
@@ -429,6 +441,33 @@ class CMakeWrapper:
             file.write('########################\n\n')
             for entry in self.cache_entries.items():
                 file.write('%s:%s=%s\n' % (entry[0], entry[1][1], entry[1][0]))
+
+    def gen_cmake_project(self):
+        with open(os.path.join(self.source_dir, 'CMakeLists.txt'), 'w') as file:
+            file.write('cmake_minimum_required(VERSION %s)\n' % '.'.join(map(str, self.version)))
+            file.write('project(%s)\n\n' % self.meson.get_project_info()['name'])
+
+            include_dirs = set()
+            for target in self.meson.get_targets():
+                include_dirs = include_dirs.union(self.meson.get_include_directories(target, False))
+
+            file.write('include_directories(\n    ')
+            file.write('\n    '.join(include_dirs) + ')\n\n')
+
+            for target in self.meson.get_targets():
+                file.write('# Target %s\n' % target['name'])
+                if target['type'] == 'executable':
+                    file.write('add_executable(%s\n    ' % (target['name']))
+                elif target['type'] == 'static library':
+                    file.write('add_library(%s\n    ' % (target['name']))
+                elif target['type'] == 'shared library':
+                    file.write('add_library(%s SHARED\n    ' % (target['name']))
+
+                target_files = self.meson.get_target_files(target)
+                file.write('\n    '.join(target_files) + ')\n')
+
+                # file.write('target_include_directories(%s PUBLIC\n    ' % (target['name']))
+                # file.write('\n    '.join(self.meson.get_include_directories(target, False)) + ')\n\n')
 
     def gen_codeblocks_project(self):
         root = ETree.Element('CodeBlocks_project_file')
@@ -469,13 +508,12 @@ class CMakeWrapper:
                 ETree.SubElement(build_target, 'Option', {'compiler': 'gcc'})
 
             compiler = ETree.SubElement(build_target, 'Compiler')
-            for define in self.meson.get_defines(target):
-                ETree.SubElement(compiler, 'Add', {'option': define})
-            for include_dir in self.meson.get_include_directories(target):
+            # for define in self.meson.get_defines(target):
+            #     ETree.SubElement(compiler, 'Add', {'option': define})
+            for include_dir in self.meson.get_default_include_directories(target):
                 ETree.SubElement(compiler, 'Add', {'directory': include_dir})
 
             make_commands = ETree.SubElement(build_target, 'MakeCommands')
-            # TODO: lookup path to ninja
             ETree.SubElement(make_commands, 'Build', {'command': self.meson.backend.path + ' -v ' + self.meson.backend.get_target(target['name'])})
             ETree.SubElement(make_commands, 'CompileFile', {'command': self.meson.backend.path + ' -v ' + self.meson.backend.get_target(target['name'])})
             ETree.SubElement(make_commands, 'Clean', {'command': self.meson.backend.path + ' -v clean'})
@@ -551,7 +589,7 @@ class CMakeWrapper:
                     depend_file.write('  )\n')
                     depend_file.write('set(CMAKE_CXX_TARGET_INCLUDE_PATH\n')
                     for inc_dir in self.meson.get_include_directories(target, False):
-                        depend_file.write('  "%s"\n' % inc_dir)
+                        depend_file.write('  "%s"\n' % os.path.relpath(inc_dir, self.build_dir))
                     depend_file.write('  )')
 
                 # CLion requires TARGET_PATH/link.txt
@@ -1181,7 +1219,7 @@ class ServerWrapper:
             self.cmake.set_generator(request['generator'])
         if 'sourceDirectory' in request:
             self.cmake.set_source_dir(request['sourceDirectory'])
-        
+
         self.cmake.load_cache_entries()
 
         self.send_reply('handshake')
@@ -1255,7 +1293,7 @@ class ServerWrapper:
             'type': 'reply',
             'buildFiles': [
                 {
-                    'sources': self.cmake.meson.get_buildsystem_files(),
+                    'sources': 'CMakeLists.txt',
                     'isCMake': False,
                     'isTemporary': False
                 }
