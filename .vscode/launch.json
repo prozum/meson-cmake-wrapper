@@ -12,7 +12,7 @@
     "configurations": [
         {
             "name": "cmake-client",
-            "type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/test-project/build",
             "program": "${workspaceFolder}/test/cmake-client",
@@ -26,7 +26,7 @@
         },
         {
             "name": "cmake-client (no source dir)",
-            "type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/test-project/build",
             "program": "${workspaceFolder}/test/cmake-client",
@@ -48,7 +48,7 @@
                 "-E",
                 "server",
                 "--pipe=${workspaceFolder}/test/test-project/build/cmake-pipe",
-                "--experiment"
+                "--experimental"
             ],
         },
         {
@@ -102,7 +102,7 @@
         },
         {
             "name": "meson-cmake-wrapper (build all)",
-            "type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/test-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
@@ -116,7 +116,7 @@
         },
         {
             "name": "meson-cmake-wrapper (version)",
-            "type": "pythonExperimental",
+            "type": "python",
             "request": "launch",
             "cwd": "${workspaceFolder}/test/test-project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
