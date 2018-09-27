@@ -1,0 +1,1 @@
+project(cmake_run)

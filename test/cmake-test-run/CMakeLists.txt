@@ -1,1 +1,0 @@
-project(cmake_test_run)

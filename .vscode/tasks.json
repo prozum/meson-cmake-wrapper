@@ -6,7 +6,7 @@
         {
             "label": "removepipe",
             "type": "shell",
-            "command": "rm -f ${workspaceFolder}/test/test-project/build/cmake-pipe"
+            "command": "rm -f ${workspaceFolder}/test/project/build/cmake-pipe"
         }
     ]
 }
