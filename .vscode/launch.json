@@ -14,13 +14,13 @@
             "name": "cmake-client",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/test/cmake-client",
             "args": [
-                "${workspaceFolder}/test/test-project/build/cmake-pipe",
+                "${workspaceFolder}/test/project/build/cmake-pipe",
                 "Ninja",
-                "${workspaceFolder}/test/test-project/build",
-                "${workspaceFolder}/test/test-project"
+                "${workspaceFolder}/test/project/build",
+                "${workspaceFolder}/test/project"
             ],
             "debugStdLib": true
         },
@@ -28,12 +28,12 @@
             "name": "cmake-client (no source dir)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/test/cmake-client",
             "args": [
-                "${workspaceFolder}/test/test-project/build/cmake-pipe",
+                "${workspaceFolder}/test/project/build/cmake-pipe",
                 "Ninja",
-                "${workspaceFolder}/test/test-project/build",
+                "${workspaceFolder}/test/project/build",
             ],
             "debugStdLib": true
         },
@@ -41,33 +41,33 @@
             "name": "meson-cmake-wrapper",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "preLaunchTask": "removepipe",
             "args": [
                 "-E",
                 "server",
-                "--pipe=${workspaceFolder}/test/test-project/build/cmake-pipe",
+                "--pipe=${workspaceFolder}/test/project/build/cmake-pipe",
                 "--experimental"
             ],
         },
         {
-            "name": "meson-cmake-wrapper (cmake-test-run)",
+            "name": "meson-cmake-wrapper (cmake-run)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/cmake-test-run/build",
+            "cwd": "${workspaceFolder}/test/cmake-run/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-G",
                 "Unix Makefiles",
-                "${workspaceFolder}/test/cmake-test-run",
+                "${workspaceFolder}/test/cmake-run",
             ],
         },
         {
             "name": "meson-cmake-wrapper (enviroment)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-E",
@@ -78,7 +78,7 @@
             "name": "meson-cmake-wrapper (codeblocks)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-G",
@@ -90,7 +90,7 @@
             "name": "meson-cmake-wrapper (clang)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "-DCMAKE_C_COMPILER=clang",
@@ -104,7 +104,7 @@
             "name": "meson-cmake-wrapper (build all)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "--build", 
@@ -118,7 +118,7 @@
             "name": "meson-cmake-wrapper (version)",
             "type": "python",
             "request": "launch",
-            "cwd": "${workspaceFolder}/test/test-project/build",
+            "cwd": "${workspaceFolder}/test/project/build",
             "program": "${workspaceFolder}/meson-cmake-wrapper",
             "args": [
                 "--version", 
