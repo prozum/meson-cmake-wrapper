@@ -555,15 +555,41 @@ class CMakeWrapper:
         with open(os.path.join(version_cmakefiles_dir, 'CMakeCXXCompiler.cmake'), 'w') as file:
             file.write('set(CMAKE_CXX_COMPILER "%s")' % self.get_entry('CMAKE_CXX_COMPILER'))
 
+        # TODO: support for non-linux systems
+        with open(os.path.join(version_cmakefiles_dir, 'CMakeSystem.cmake'), 'w') as file:
+            file.write('set(CMAKE_HOST_SYSTEM_NAME "Linux")\n')
+            file.write('set(CMAKE_SYSTEM_NAME "Linux")\n')
+
         # CLion requires Makefile.cmake
         with open(os.path.join(root_cmakefiles_dir, 'Makefile.cmake'), 'w') as file:
             file.write('set(CMAKE_DEPENDS_GENERATOR "%s")\n' % self.generator)
+
+            file.write('set(CMAKE_MAKEFILE_DEPENDS\n')
+            file.write('    "CMakeCache.txt"\n')
+            file.write('    "%s/CMakeLists.txt"\n' % os.path.relpath(self.source_dir, self.build_dir))
+            file.write('    "%s/CMakeCCompiler.cmake"\n' % os.path.relpath(version_cmakefiles_dir, self.build_dir))
+            file.write('    "%s/CMakeCXXCompiler.cmake"\n' % os.path.relpath(version_cmakefiles_dir, self.build_dir))
+            file.write('    "%s/CMakeSystem.cmake"\n' % os.path.relpath(version_cmakefiles_dir, self.build_dir))
+            file.write('  )\n')
+
+            file.write('set(CMAKE_MAKEFILE_DEPENDS\n')
+            file.write('    "CMakeFiles/CMakeDirectoryInformation.cmake"\n')
+            file.write('  )\n')
+
             file.write('set(CMAKE_DEPEND_INFO_FILES\n')
             for target in self.meson.get_targets():
                 target_depend = os.path.join(os.path.dirname(target['filename']), 'CMakeFiles',
                                              target['name'] + '.dir', 'DependInfo.cmake')
                 file.write('  "%s"\n' % target_depend)
             file.write('  )')
+
+        with open(os.path.join(root_cmakefiles_dir, 'CMakeDirectoryInformation.cmake'), 'w') as dir_info_file:
+            dir_info_file.write('set(CMAKE_RELATIVE_PATH_TOP_SOURCE "%s")\n' % self.source_dir)
+            dir_info_file.write('set(CMAKE_RELATIVE_PATH_TOP_BINARY "%s")\n' % self.build_dir)
+            dir_info_file.write('set(CMAKE_C_INCLUDE_REGEX_SCAN "^.*$")\n')
+            dir_info_file.write('set(CMAKE_C_INCLUDE_REGEX_COMPLAIN "^$")\n')
+            dir_info_file.write('set(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\n')
+            dir_info_file.write('set(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n')
 
         # CLion fetches target directories from TargetDirectories.txt
         with open(os.path.join(root_cmakefiles_dir, 'TargetDirectories.txt'), 'w') as target_dir_file:
@@ -582,6 +608,10 @@ class CMakeWrapper:
 
                 # CLion requires TARGET_PATH/DependInfo.cmake
                 with open(os.path.join(target_path, 'DependInfo.cmake'), 'w') as depend_file:
+                    depend_file.write('set(CMAKE_DEPENDS_LANGUAGES\n')
+                    depend_file.write('    "CXX"\n')
+                    depend_file.write('    "CC"\n')
+                    depend_file.write('    )\n')
                     depend_file.write('set(CMAKE_DEPENDS_CHECK_CXX\n')
                     for target_file in self.meson.get_target_files(target):
                         object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
@@ -610,10 +640,9 @@ class CMakeWrapper:
                             prefix = 'CXX'
                         else:
                             prefix = 'CC'
-                        flags_file.write('%s_FLAGS = %s\n' % (prefix, ' '.join(self.meson.get_flags(target))))
-                        flags_file.write('%s_DEFINES = %s\n' % (prefix, ' '.join(self.meson.get_defines(target))))
-                        flags_file.write('%s_INCLUDES = %s\n' % (prefix, ' '.join(
-                            ['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
+                        flags_file.write('%s_FLAGS = \n' % prefix)
+                        flags_file.write('%s_DEFINES = \n' % prefix)
+                        flags_file.write('%s_INCLUDES = \n' % prefix)
 
 
 class Meson:

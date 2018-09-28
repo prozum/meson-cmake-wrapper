@@ -4,7 +4,10 @@
 
 using namespace std;
 
-int main(int argc, char *argv[]) {
-  auto instance = two::Class();
-  instance.call(TemplateClass<string>("hello"));
+#include <iostream>
+
+int main(int argc, char *argv[])
+{
+    auto instance = two::Class();
+    instance.call(TemplateClass<string>("hello"));
 }
