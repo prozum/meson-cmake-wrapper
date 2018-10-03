@@ -107,7 +107,7 @@ class CMakeClient:
         self.cookies[request['type']] = request['cookie']
 
         self.log('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
-        request = SERVER_HEADER + json.dumps(request).encode('gbk') + SERVER_FOOTER
+        request = SERVER_HEADER + json.dumps(request).encode('utf-8') + SERVER_FOOTER
         self.write(request)
 
     def parse_recv(self, data):
@@ -173,7 +173,7 @@ class CMakeClient:
         self.send(request)
 
     def handle_hello(self, response):
-        print('Handle Hello')
+        print('Handle Message')
 
     def handle_message(self, response):
         print('Handle Message')

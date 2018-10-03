@@ -4,9 +4,21 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "createbuilddir",
+            "type": "shell",
+            "command": "mkdir -p ${workspaceFolder}/test/project/build"
+        },
+        {
             "label": "removepipe",
             "type": "shell",
             "command": "rm -f ${workspaceFolder}/test/project/build/cmake-pipe"
+        },
+        {
+            "label": "prelaunch",
+            "dependsOn": [
+                "createbuilddir",
+                "removepipe"
+            ]
         }
     ]
 }

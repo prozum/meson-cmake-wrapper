@@ -1,2 +1,5 @@
 meson-cmake-wrapper.log
 cmake-client.log
+dist
+*.egg-info
+__pycache__
