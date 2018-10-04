@@ -70,9 +70,9 @@ class CMakeWrapper:
             self.command = 'none'
         i = 1
         while i < len(args):
-            if args[i] == '-version' or args[i] == '--version':
+            if args[i] in ('-version', '--version'):
                 self.command = 'version'
-            elif args[i] == '-help' or args[i] == '--help':
+            elif args[i] in ('-h', '-help', '--help'):
                 self.command = 'help'
             elif args[i] == '--debug-output':
                 self.debug = True
