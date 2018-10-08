@@ -474,7 +474,7 @@ class CMakeWrapper:
             compiler = ETree.SubElement(build_target, 'Compiler')
             for define in self.meson.get_defines(target):
                 ETree.SubElement(compiler, 'Add', {'option': define})
-            for include_dir in self.meson.get_default_include_directories(target):
+            for include_dir in self.meson.get_include_directories(target):
                 ETree.SubElement(compiler, 'Add', {'directory': include_dir})
 
             make_commands = ETree.SubElement(build_target, 'MakeCommands')
@@ -614,4 +614,4 @@ class CMakeWrapper:
                     if lang:
                         flags_file.write('%s_FLAGS = \n' % lang)
                         flags_file.write('%s_DEFINES = %s\n' % (lang, ' '.join(self.meson.get_defines(target))))
-                        flags_file.write('%s_INCLUDES = \n' % lang)
+                        flags_file.write('%s_INCLUDES = %s\n' % (lang, ' '.join(['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
