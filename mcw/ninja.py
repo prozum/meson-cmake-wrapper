@@ -29,7 +29,6 @@ class NinjaBackend:
     def setup(self):
         ninja_file = os.path.join(self.meson.build_dir, 'build.ninja')
         if os.path.exists(ninja_file):
-            self.reconfigure()
             return True
         return False
 
