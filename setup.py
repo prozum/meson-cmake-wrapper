@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='meson-cmake-wrapper',
-    version='0.0.4',
+    version='0.1.0',
     description='Build system wrapper that provides Meson integration in CMake IDE\'s',
     author='Niclas Moeslund Overby',
     author_email='noverby@prozum.dk',
