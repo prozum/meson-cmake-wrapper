@@ -472,8 +472,8 @@ class CMakeWrapper:
                 ETree.SubElement(build_target, 'Option', {'compiler': 'gcc'})
 
             compiler = ETree.SubElement(build_target, 'Compiler')
-            # for define in self.meson.get_defines(target):
-            #     ETree.SubElement(compiler, 'Add', {'option': define})
+            for define in self.meson.get_defines(target):
+                ETree.SubElement(compiler, 'Add', {'option': define})
             for include_dir in self.meson.get_default_include_directories(target):
                 ETree.SubElement(compiler, 'Add', {'directory': include_dir})
 
@@ -560,6 +560,15 @@ class CMakeWrapper:
             targets = self.meson.get_targets()
 
             for target in targets:
+                # Detect language
+                lang = None
+                compiler = self.meson.get_compiler(target)
+                if compiler:
+                    if compiler.endswith('++'):
+                        lang = 'CXX'
+                    else:
+                        lang = 'CC'
+
                 # All directories under the build directory should have a CMakeFiles directory
                 cmakefiles_dir = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles')
                 pathlib.Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
@@ -572,19 +581,23 @@ class CMakeWrapper:
 
                 # CLion requires TARGET_PATH/DependInfo.cmake
                 with open(os.path.join(target_path, 'DependInfo.cmake'), 'w') as depend_file:
-                    depend_file.write('set(CMAKE_DEPENDS_LANGUAGES\n')
-                    depend_file.write('    "CXX"\n')
-                    depend_file.write('    "CC"\n')
-                    depend_file.write('    )\n')
-                    depend_file.write('set(CMAKE_DEPENDS_CHECK_CXX\n')
-                    for target_file in self.meson.get_target_files(target):
-                        object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
-                        depend_file.write('  "%s" "%s"\n' % (os.path.join(self.source_dir, target_file), object_path))
-                    depend_file.write('  )\n')
-                    depend_file.write('set(CMAKE_CXX_TARGET_INCLUDE_PATH\n')
-                    for inc_dir in self.meson.get_include_directories(target, False):
-                        depend_file.write('  "%s"\n' % os.path.relpath(inc_dir, self.build_dir))
-                    depend_file.write('  )')
+                    if lang:
+                        depend_file.write('set(CMAKE_DEPENDS_LANGUAGES\n')
+                        depend_file.write('    "%s"\n' % lang)
+                        depend_file.write('    )\n')
+                        depend_file.write('set(CMAKE_DEPENDS_CHECK_%s\n' % lang)
+                        for target_file in self.meson.get_target_files(target):
+                            object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
+                            depend_file.write('  "%s" "%s"\n' % (os.path.join(self.source_dir, target_file), object_path))
+                        depend_file.write('  )\n')
+                        depend_file.write('set(CMAKE_TARGET_DEFINITIONS_%s\n' % lang)
+                        for define in self.meson.get_defines(target):
+                            depend_file.write('  "%s"\n' % define[2:])
+                        depend_file.write('  )\n')
+                        depend_file.write('set(CMAKE_%s_TARGET_INCLUDE_PATH\n' % lang)
+                        for inc_dir in self.meson.get_include_directories(target, False):
+                            depend_file.write('  "%s"\n' % os.path.relpath(inc_dir, self.build_dir))
+                        depend_file.write('  )')
 
                 # CLion requires TARGET_PATH/link.txt
                 with open(os.path.join(target_path, 'link.txt'), 'w') as link_file:
@@ -598,12 +611,7 @@ class CMakeWrapper:
                     build_file.write('%s: %s' % (os.path.join(target_path, 'build'), os.path.join(self.meson.build_dir, target['filename'])))
 
                 with open(os.path.join(target_path, 'flags.make'), 'w') as flags_file:
-                    compiler = self.meson.get_compiler(target)
-                    if compiler:
-                        if compiler.endswith('++'):
-                            prefix = 'CXX'
-                        else:
-                            prefix = 'CC'
-                        flags_file.write('%s_FLAGS = \n' % prefix)
-                        flags_file.write('%s_DEFINES = \n' % prefix)
-                        flags_file.write('%s_INCLUDES = \n' % prefix)
+                    if lang:
+                        flags_file.write('%s_FLAGS = \n' % lang)
+                        flags_file.write('%s_DEFINES = %s\n' % (lang, ' '.join(self.meson.get_defines(target))))
+                        flags_file.write('%s_INCLUDES = \n' % lang)
