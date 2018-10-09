@@ -463,7 +463,8 @@ class CMakeWrapper:
                 'executable': '1',
                 'static library': '2',
                 'shared library': '3',
-                'custom': '4'
+                'custom': '4',
+                'run': '4'
             }[target['type']]
             ETree.SubElement(build_target, 'Option', {'type': ty})
 

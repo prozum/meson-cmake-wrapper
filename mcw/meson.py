@@ -80,11 +80,12 @@ class Meson:
 
     def get_target_files(self, target):
         id = target['id']
-        if id == 'all':
+        if id == 'all' or target['type'] == 'run':
             return []
         if id in self.c_target_files:
             return self.c_target_files[id]
 
+        self.log('(target) "%s"' % id)
         output = self.call(['introspect', '--target-files', id, self.build_dir])
         self.log('(target files) "%s"' % output)
 
