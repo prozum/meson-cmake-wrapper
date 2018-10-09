@@ -613,6 +613,6 @@ class CMakeWrapper:
 
                 with open(os.path.join(target_path, 'flags.make'), 'w') as flags_file:
                     if lang:
-                        flags_file.write('%s_FLAGS = \n' % lang)
+                        flags_file.write('%s_FLAGS = %s\n' % (lang, ' '.join([flag for flag in self.meson.get_flags(target) if flag.startswith('-std')])))
                         flags_file.write('%s_DEFINES = %s\n' % (lang, ' '.join(self.meson.get_defines(target))))
                         flags_file.write('%s_INCLUDES = %s\n' % (lang, ' '.join(['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
