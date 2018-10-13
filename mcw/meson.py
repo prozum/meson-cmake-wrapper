@@ -44,8 +44,9 @@ class Meson:
                 if show:
                     print(output.decode("utf-8"), end='')
                 fulloutput += output
+        fulloutput = fulloutput.decode("utf-8")
         if child.poll() != 0:
-            raise RuntimeError(fulloutput.decode("utf-8"))
+            raise RuntimeError(fulloutput)
         return fulloutput
 
     def set_backend(self, backend):
