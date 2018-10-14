@@ -22,8 +22,9 @@ class NinjaBackend:
                 if show:
                     print(output.decode("utf-8"), end='')
                 fulloutput += output
+        fulloutput = fulloutput.decode("utf-8")
         if child.poll() != 0:
-            raise RuntimeError(fulloutput.decode("utf-8"))
+            raise RuntimeError(fulloutput)
         return fulloutput
 
     def setup(self):
