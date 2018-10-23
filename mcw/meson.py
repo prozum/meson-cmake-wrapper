@@ -208,6 +208,9 @@ class Meson:
         self.c_default_inc_dirs[lang] = paths
         return self.c_default_inc_dirs[lang]
 
+    def get_output(self, target):
+        return os.path.join(self.build_dir, target['filename'])
+
     def get_options(self):
         meson_options = []
 

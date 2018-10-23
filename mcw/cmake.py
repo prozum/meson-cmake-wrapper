@@ -3,6 +3,7 @@ import sys
 import pickle
 import pathlib
 import logging
+import json
 import xml.etree.ElementTree as ETree
 
 from .logging import ServerLogHandler
@@ -19,7 +20,7 @@ class CMakeWrapper:
 
     def __init__(self):
         self.version = [3, 10, 0]
-        self.path = ''
+        self.path = sys.argv[0]
         self.debug = False
         self.command = 'generate'
         self.generator = None
@@ -177,6 +178,9 @@ class CMakeWrapper:
         if self.generator.startswith('CodeBlocks'):
             self.gen_codeblocks_project()
 
+        if self.generator.startswith('Android Gradle'):
+            self.gen_android_gradle_project()
+
     def build_cmd(self):
         # Set default build dir
         if not self.build_dir:
@@ -250,6 +254,8 @@ class CMakeWrapper:
         elif generator == 'CodeBlocks - Ninja':
             self.meson.set_backend('ninja')
         elif generator == 'CodeBlocks - Unix Makefiles':
+            self.meson.set_backend('ninja')
+        elif generator == 'Android Gradle - Ninja':
             self.meson.set_backend('ninja')
         else:
             raise Exception('Generator not supported: ' + generator)
@@ -609,10 +615,78 @@ class CMakeWrapper:
 
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(os.path.join(target_path, 'build.make'), 'w') as build_file:
-                    build_file.write('%s: %s' % (os.path.join(target_path, 'build'), os.path.join(self.meson.build_dir, target['filename'])))
+                    build_file.write('%s: %s' % (os.path.join(target_path, 'build'), self.meson.get_output(target)))
 
                 with open(os.path.join(target_path, 'flags.make'), 'w') as flags_file:
                     if lang:
                         flags_file.write('%s_FLAGS = %s\n' % (lang, ' '.join([flag for flag in self.meson.get_flags(target) if flag.startswith('-std')])))
                         flags_file.write('%s_DEFINES = %s\n' % (lang, ' '.join(self.meson.get_defines(target))))
                         flags_file.write('%s_INCLUDES = %s\n' % (lang, ' '.join(['-I' + inc_dir for inc_dir in self.meson.get_include_directories(target, False)])))
+
+    def gen_android_gradle_project(self):
+        if not self.get_entry('ANDROID_ABI'):
+            raise RuntimeError('ANDROID_ABI must be set in Gradle projects')
+
+        # android_gradle_build_mini.json
+        libs = {}
+        for target in self.meson.get_targets():
+            if self.get_entry('CMAKE_BUILD_TYPE'):
+                lib = '%s-%s-%s' % (target['name'], self.get_entry('CMAKE_BUILD_TYPE'), self.get_entry('ANDROID_ABI'))
+            else:
+                lib = '%s-%s' % (target['name'], self.get_entry('ANDROID_ABI'))
+            libs[lib] = {
+                'artifactName': target['name'],
+                'buildCommand': '%s --build %s --target %s' % (self.path, self.build_dir, target['name']),
+                'abi': self.get_entry('ANDROID_ABI'),
+                'output': self.meson.get_output(target)
+            }
+        gradle_mini = {
+            'buildFiles': os.path.join(self.source_dir, 'CMakeLists.txt'),
+            'cleanCommands': [
+                '%s --build %s --target clean' % (self.path, self.build_dir)
+            ],
+            'libraries': libs,
+        }
+        with open(os.path.join(self.build_dir, 'android_gradle_build_mini.json'), 'w') as file:
+            json.dump(gradle_mini, file)
+
+        # android_gradle_build.json
+        libs = {}
+        for target in self.meson.get_targets():
+            if self.get_entry('CMAKE_BUILD_TYPE'):
+                lib = '%s-%s-%s' % (target['name'], self.get_entry('CMAKE_BUILD_TYPE'), self.get_entry('ANDROID_ABI'))
+            else:
+                lib = '%s-%s' % (target['name'], self.get_entry('ANDROID_ABI'))
+
+            files = []
+            for mfile in self.meson.get_target_files(target):
+                file = {}
+                file['flags'] = ' '.join(self.meson.get_flags(target))
+                file['src'] = os.path.join(self.source_dir, mfile)
+                file['workingDirectory'] = self.build_dir
+                files.append(file)
+
+            libs[lib] = {
+                'abi': self.get_entry('ANDROID_ABI'),
+                'artifactName': target['name'],
+                'buildCommand': '%s --build %s --target %s' % (self.path, self.build_dir, target['name']),
+                'files': files,
+                'output': self.meson.get_output(target),
+                'toolchain': '1111111111111111111'
+            }
+        gradle = {
+            'buildFiles': os.path.join(self.source_dir, 'CMakeLists.txt'),
+            'cleanCommands': [
+                '%s --build %s --target clean' % (self.path, self.build_dir)
+            ],
+            'cppFileExtensions': ['cpp'],
+            'libraries': libs,
+            'toolchains': {
+                '1111111111111111111': {
+                    'cCompilerExecutable': self.get_entry('CMAKE_C_COMPILER'),
+                    'cppCompilerExecutable': self.get_entry('CMAKE_CXX_COMPILER')
+                }
+            }
+        }
+        with open(os.path.join(self.build_dir, 'android_gradle_build.json'), 'w') as file:
+            json.dump(gradle, file)
