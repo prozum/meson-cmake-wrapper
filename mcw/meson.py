@@ -81,7 +81,7 @@ class Meson:
 
     def get_target_files(self, target):
         id = target['id']
-        if id == 'all' or target['type'] == 'run':
+        if id == 'all' or target['type'] in ('run', 'custom'):
             return []
         if id in self.c_target_files:
             return self.c_target_files[id]
