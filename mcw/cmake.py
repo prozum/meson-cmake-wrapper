@@ -374,15 +374,15 @@ class CMakeWrapper:
             os.environ['CFLAGS'] = val
         elif key == 'CMAKE_CXX_FLAGS':
             os.environ['CXXFLAGS'] = val
-        # Use CMake variable 'MESON' for custom Meson path
-        elif key == 'MESON':
+        # Use CMake variable 'MCW_MESON' for custom Meson path
+        elif key == 'MCW_MESON':
             self.meson.path = val
-        # Use CMake variable 'CROSS_FILE' for setting Meson cross-file
-        elif key == 'CROSS_FILE':
+        # Use CMake variable 'MCW_CROSS_FILE' for setting Meson cross-file
+        elif key == 'MCW_CROSS_FILE':
             self.meson.cross_file = val
-        # Use CMake variable 'GEN_CMAKE' to toggle cmake project generation
-        elif key == 'GEN_CMAKE':
-            self.gen_cross = True
+        # Use CMake variable 'MCW_GEN_CMAKE' to toggle cmake project generation
+        elif key == 'MCW_GEN_CMAKE':
+            self.gen_cmake = True
 
     def save_cache_entries(self):
         if self.build_dir:
