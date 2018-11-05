@@ -574,7 +574,7 @@ class CMakeWrapper:
                     if compiler.endswith('++'):
                         lang = 'CXX'
                     else:
-                        lang = 'CC'
+                        lang = 'C'
 
                 # All directories under the build directory should have a CMakeFiles directory
                 cmakefiles_dir = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles')
