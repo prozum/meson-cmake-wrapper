@@ -77,6 +77,8 @@ class CMakeWrapper:
                 self.command = 'help'
             elif args[i] == '--debug-output':
                 self.debug = True
+            elif args[i] in ('--warn-uninitialized', '--warn-unused-vars', '--no-warn-unused-cli'):
+                pass
             elif args[i] == '--help-module-list':
                 self.command = 'module_list'
             # Undocumented CMake flags -H -B
