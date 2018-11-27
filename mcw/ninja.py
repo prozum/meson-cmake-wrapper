@@ -1,15 +1,17 @@
 import os
 import subprocess
 
+from .util import find_executables
+
 
 class NinjaBackend:
     """
     Class that handles interaction with Ninja.
     """
 
-    def __init__(self, meson, path='ninja'):
+    def __init__(self, meson):
         self.meson = meson
-        self.path = path
+        self.path = find_executables(['ninja-build', 'ninja'])
 
     def call(self, args, show=False):
         child = subprocess.Popen([self.path] + args, stdout=subprocess.PIPE)
