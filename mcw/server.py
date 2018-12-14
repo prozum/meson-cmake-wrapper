@@ -281,7 +281,7 @@ class ServerWrapper:
 
     def get_project(self):
         project = {
-            'name': self.meson.get_project_info()['name'],
+            'name': self.meson.get_project_name(),
             'buildDirectory': self.cmake.build_dir,
             'sourceDirectory': self.cmake.source_dir,
             'targets': []

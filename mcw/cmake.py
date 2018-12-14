@@ -334,9 +334,9 @@ class CMakeWrapper:
             'CMAKE_MAKE_PROGRAM': (find_executables(['make']), 'FILEPATH'),
             'CMAKE_RANLIB': (find_executables(['ranlib']), 'FILEPATH'),
             'CMAKE_AR': (find_executables(['ar']), 'FILEPATH'),
-            'CMAKE_PROJECT_NAME': (self.meson.get_project_info()['name'], 'STATIC'),
-            '%s_BINARY_DIR' % self.meson.get_project_info()['name']: (self.build_dir, 'STATIC'),
-            '%s_SOURCE_DIR' % self.meson.get_project_info()['name']: (self.source_dir, 'STATIC'),
+            'CMAKE_PROJECT_NAME': (self.meson.get_project_name(), 'STATIC'),
+            '%s_BINARY_DIR' % self.meson.get_project_name(): (self.build_dir, 'STATIC'),
+            '%s_SOURCE_DIR' % self.meson.get_project_name(): (self.source_dir, 'STATIC'),
             'CMAKE_CACHEFILE_DIR': (self.build_dir, 'INTERNAL'),
             'CMAKE_CACHE_MAJOR_VERSION': (str(self.version[0]), 'INTERNAL'),
             'CMAKE_CACHE_MINOR_VERSION': (str(self.version[1]), 'INTERNAL'),
@@ -417,7 +417,7 @@ class CMakeWrapper:
     def gen_cmake_project(self):
         with open(os.path.join(self.source_dir, 'CMakeLists.txt'), 'w') as file:
             file.write('cmake_minimum_required(VERSION %s)\n' % '.'.join(map(str, self.version)))
-            file.write('project(%s)\n\n' % self.meson.get_project_info()['name'])
+            file.write('project(%s)\n\n' % self.meson.get_project_name())
 
             include_dirs = set()
             for target in self.meson.get_targets():
@@ -446,7 +446,7 @@ class CMakeWrapper:
         tree = ETree.ElementTree(root)
         ETree.SubElement(root, 'FileVersion', {'major': '1', 'minor': '6'})
         project = ETree.SubElement(root, 'Project')
-        ETree.SubElement(project, 'Option', {'title': self.meson.get_project_info()['name']})
+        ETree.SubElement(project, 'Option', {'title': self.meson.get_project_name()})
         ETree.SubElement(project, 'Option', {'makefile_is_custom': '1'})
         ETree.SubElement(project, 'Option', {'compiler': 'gcc'})
         ETree.SubElement(project, 'Option', {'virtualFolders': 'Meson Files'})
@@ -511,7 +511,7 @@ class CMakeWrapper:
             unit = ETree.SubElement(project, 'Unit', {'filename': os.path.join(self.source_dir, file)})
             ETree.SubElement(unit, 'Option', {'virtualFolder': os.path.join('Meson Files', os.path.dirname(file))})
 
-        project_file = os.path.join(self.build_dir, self.meson.get_project_info()['name'] + '.cbp')
+        project_file = os.path.join(self.build_dir, self.meson.get_project_name() + '.cbp')
         tree.write(project_file, 'unicode', True)
 
     def gen_make_project(self):

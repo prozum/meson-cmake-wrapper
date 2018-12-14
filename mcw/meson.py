@@ -19,6 +19,8 @@ class Meson:
         self.cross_file = None
 
         # Cache
+        self.c_version = None
+        self.c_project_name = None
         self.c_targets = None
         self.c_target_files = {}
         self.c_buildsystem_files = None
@@ -69,6 +71,24 @@ class Meson:
 
     def build(self, target):
         return self.backend.build(target)
+
+    def get_version(self):
+        if self.c_version:
+            return self.c_version
+        
+        self.c_version = list(map(int, self.call(['--version']).split('.')))
+        return self.c_version
+    
+    def get_project_name(self):
+        if self.c_project_name:
+            return self.c_project_name
+        if self.get_version()[1] >= 49:
+            attr = 'descriptive_name'
+        else:
+            attr = 'name'
+
+        self.c_project_name = self.get_project_info()[attr]
+        return self.c_project_name
 
     def get_targets(self):
         if self.c_targets:
