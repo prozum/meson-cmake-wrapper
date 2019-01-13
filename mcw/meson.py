@@ -75,10 +75,10 @@ class Meson:
     def get_version(self):
         if self.c_version:
             return self.c_version
-        
+
         self.c_version = list(map(int, self.call(['--version']).split('.')))
         return self.c_version
-    
+
     def get_project_name(self):
         if self.c_project_name:
             return self.c_project_name
@@ -105,7 +105,15 @@ class Meson:
             return []
         if id in self.c_target_files:
             return self.c_target_files[id]
+        # Handle the new targets API of 0.50.0
+        if 'target_sources' in target:
+            self.c_target_files[id] = []
+            for i in target['target_sources']:
+                self.c_target_files[id] += i['sources']
+                self.c_target_files[id] += i['generated_sources']
+            return self.c_target_files[id]
 
+        # Handle meson versions before 0.50.0
         self.log('(target) "%s"' % id)
         output = self.call(['introspect', '--target-files', id, self.build_dir])
         self.log('(target files) "%s"' % output)
