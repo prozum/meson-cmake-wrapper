@@ -73,30 +73,24 @@ class Meson:
         return self.backend.build(target)
 
     def get_version(self):
-        if self.c_version:
-            return self.c_version
-
-        self.c_version = list(map(int, self.call(['--version']).split('.')))
+        if not self.c_version:
+            self.c_version = list(map(int, self.call(['--version']).split('.')))
         return self.c_version
 
     def get_project_name(self):
-        if self.c_project_name:
-            return self.c_project_name
-        if self.get_version()[1] >= 49:
-            attr = 'descriptive_name'
-        else:
-            attr = 'name'
-
-        self.c_project_name = self.get_project_info()[attr]
+        if not self.c_project_name:
+            if self.get_version()[1] >= 49:
+                attr = 'descriptive_name'
+            else:
+                attr = 'name'
+            self.c_project_name = self.get_project_info()[attr]
         return self.c_project_name
 
     def get_targets(self):
-        if self.c_targets:
-            return self.c_targets
-
-        output = self.call(['introspect', '--targets', self.build_dir])
-        self.log('(targets) "%s"' % output)
-        self.c_targets = json.loads(output)
+        if not self.c_targets:
+            output = self.call(['introspect', '--targets', self.build_dir])
+            self.log('(targets) "%s"' % output)
+            self.c_targets = json.loads(output)
         return self.c_targets
 
     def get_target_files(self, target):
@@ -126,39 +120,34 @@ class Meson:
         return self.c_target_files[id]
 
     def get_buildsystem_files(self):
-        if self.c_buildsystem_files:
-            return self.c_buildsystem_files
-        output = self.call(['introspect', '--buildsystem-files', self.build_dir])
-        self.log('(buildsystem files) "%s"' % output)
-        self.c_buildsystem_files = json.loads(output)
+        if not self.c_buildsystem_files:
+            output = self.call(['introspect', '--buildsystem-files', self.build_dir])
+            self.log('(buildsystem files) "%s"' % output)
+            self.c_buildsystem_files = json.loads(output)
         return self.c_buildsystem_files
 
     def get_project_info(self):
-        if self.c_project_info:
-            return self.c_project_info
-        output = self.call(['introspect', '--projectinfo', self.build_dir])
-        self.log('(project info) "%s"' % output)
-        self.c_project_info = json.loads(output)
+        if not self.c_project_info:
+            output = self.call(['introspect', '--projectinfo', self.build_dir])
+            self.log('(project info) "%s"' % output)
+            self.c_project_info = json.loads(output)
         return self.c_project_info
 
     def get_compile_commands(self, target):
         id = target['id']
-        if id in self.c_compile_commands_target:
-            return self.c_compile_commands_target[id]
-
-        if not self.c_compile_commands:
-            compile_commands_file = os.path.join(self.build_dir, 'compile_commands.json')
-            if not os.path.exists(compile_commands_file):
-                Exception('No compile_commands.json in build dir')
-            json_data = open(compile_commands_file).read()
-            self.c_compile_commands = json.loads(json_data)
-
-        # Only way to identify target compiler commands from compile_commands.json
-        # is by using a file from the wanted target
-        if len(self.get_target_files(target)) == 0:
-            return []
-        target_file = os.path.relpath(os.path.join(self.source_dir, self.get_target_files(target)[0]), self.build_dir)
-        self.c_compile_commands_target[id] = next((cmd for cmd in self.c_compile_commands if cmd['file'] == target_file), None)
+        if id not in self.c_compile_commands_target:
+            if not self.c_compile_commands:
+                compile_commands_file = os.path.join(self.build_dir, 'compile_commands.json')
+                if not os.path.exists(compile_commands_file):
+                    Exception('No compile_commands.json in build dir')
+                json_data = open(compile_commands_file).read()
+                self.c_compile_commands = json.loads(json_data)
+            # Only way to identify target compiler commands from compile_commands.json
+            # is by using a file from the wanted target
+            if len(self.get_target_files(target)) == 0:
+                return []
+            target_file = os.path.relpath(os.path.join(self.source_dir, self.get_target_files(target)[0]), self.build_dir)
+            self.c_compile_commands_target[id] = next((cmd for cmd in self.c_compile_commands if cmd['file'] == target_file), None)
         return self.c_compile_commands_target[id]
 
     def get_compiler(self, target=None):
@@ -213,27 +202,25 @@ class Meson:
         else:
             lang = 'c'
 
-        if lang in self.c_default_inc_dirs:
-            return self.c_default_inc_dirs[lang]
+        if lang not in self.c_default_inc_dirs:
+            output = subprocess.Popen([compiler, '-x' + lang, '-E', '-v', '-'],
+                                      stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.PIPE)
+            stderr = output.stderr.read().decode()
+            start = False
+            paths = []
+            for line in stderr.split('\n'):
+                if not start:
+                    if line == '#include <...> search starts here:':
+                        start = True
+                elif start:
+                    if line == 'End of search list.':
+                        break
+                    else:
+                        paths.append(os.path.abspath(line[1:]))
 
-        output = subprocess.Popen([compiler, '-x' + lang, '-E', '-v', '-'],
-                                  stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.PIPE)
-        stderr = output.stderr.read().decode()
-        start = False
-        paths = []
-        for line in stderr.split('\n'):
-            if not start:
-                if line == '#include <...> search starts here:':
-                    start = True
-            elif start:
-                if line == 'End of search list.':
-                    break
-                else:
-                    paths.append(os.path.abspath(line[1:]))
-
-        self.c_default_inc_dirs[lang] = paths
+            self.c_default_inc_dirs[lang] = paths
         return self.c_default_inc_dirs[lang]
 
     def get_output(self, target):
