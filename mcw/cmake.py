@@ -170,6 +170,7 @@ class CMakeWrapper:
 
         # Create CMakeCache.txt
         self.gen_cmake_cache()
+        self.save_cache_entries()
 
         if self.gen_cmake:
             self.gen_cmake_project()
