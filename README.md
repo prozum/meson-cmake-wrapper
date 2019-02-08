@@ -1,3 +1,5 @@
+[![PyPI](https://img.shields.io/pypi/v/meson-cmake-wrapper.svg)](https://pypi.python.org/pypi/meson-cmake-wrapper)
+
 # meson-cmake-wrapper
 Build system wrapper that provides Meson integration in CMake IDE's.
 
