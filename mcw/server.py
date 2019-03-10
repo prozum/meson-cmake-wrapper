@@ -291,7 +291,8 @@ class ServerWrapper:
             'executable': 'EXECUTABLE',
             'static library': 'STATIC_LIBRARY',
             'shared library': 'SHARED_LIBRARY',
-            'custom': 'UTILITY'
+            'custom': 'UTILITY',
+            'run': 'UTILITY'
         }
 
         for mtarget in self.meson.get_targets():
