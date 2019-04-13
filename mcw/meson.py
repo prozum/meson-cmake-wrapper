@@ -224,7 +224,13 @@ class Meson:
         return self.c_default_inc_dirs[lang]
 
     def get_output(self, target):
-        return os.path.join(self.build_dir, target['filename'])
+        return os.path.join(self.build_dir, self.get_target_filename(target))
+
+    def get_target_filename(self, target):
+        if self.get_version()[1] >= 50:
+            return target['filename'][0]
+        else:
+            return target['filename']
 
     def get_options(self):
         meson_options = []

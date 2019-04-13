@@ -463,7 +463,7 @@ class CMakeWrapper:
 
         for target in [all_target] + self.meson.get_targets():
             build_target = ETree.SubElement(build, 'Target', {'title': target['name']})
-            output = os.path.join(self.meson.build_dir, target['filename'])
+            output = os.path.join(self.meson.build_dir, self.meson.get_target_filename(target))
             output_dir = os.path.split(output)[0]
             ETree.SubElement(build_target, 'Option', {'output': output})
             ETree.SubElement(build_target, 'Option', {'working_dir': output_dir})
@@ -552,8 +552,8 @@ class CMakeWrapper:
 
             file.write('set(CMAKE_DEPEND_INFO_FILES\n')
             for target in self.meson.get_targets():
-                target_depend = os.path.join(os.path.dirname(target['filename']), 'CMakeFiles',
-                                             target['name'] + '.dir', 'DependInfo.cmake')
+                target_depend = os.path.join(os.path.dirname(self.meson.get_target_filename(target)), 'CMakeFiles',
+                                         target['name'] + '.dir', 'DependInfo.cmake')
                 file.write('  "%s"\n' % target_depend)
             file.write('  )')
 
@@ -580,11 +580,11 @@ class CMakeWrapper:
                         lang = 'C'
 
                 # All directories under the build directory should have a CMakeFiles directory
-                cmakefiles_dir = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles')
+                cmakefiles_dir = os.path.join(self.build_dir, os.path.dirname(self.meson.get_target_filename(target)), 'CMakeFiles')
                 pathlib.Path(cmakefiles_dir).mkdir(parents=True, exist_ok=True)
 
                 # CLion fetches target name from TARGET_NAME.dir directories
-                target_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), 'CMakeFiles',
+                target_path = os.path.join(self.build_dir, os.path.dirname(self.meson.get_target_filename(target)), 'CMakeFiles',
                                            target['name'] + '.dir')
                 target_dir_file.write(target_path + '\n')
                 pathlib.Path(target_path).mkdir(exist_ok=True)
@@ -597,7 +597,7 @@ class CMakeWrapper:
                         depend_file.write('    )\n')
                         depend_file.write('set(CMAKE_DEPENDS_CHECK_%s\n' % lang)
                         for target_file in self.meson.get_target_files(target):
-                            object_path = os.path.join(self.build_dir, os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o')
+                            object_path = os.path.join(self.build_dir, os.path.dirname(self.meson.get_target_filename(target)), target['id'], os.path.basename(target_file) + '.o')
                             depend_file.write('  "%s" "%s"\n' % (os.path.join(self.source_dir, target_file), object_path))
                         depend_file.write('  )\n')
                         depend_file.write('set(CMAKE_TARGET_DEFINITIONS_%s\n' % lang)
@@ -611,10 +611,10 @@ class CMakeWrapper:
 
                 # CLion requires TARGET_PATH/link.txt
                 with open(os.path.join(target_path, 'link.txt'), 'w') as link_file:
-                    link_file.write('%s qc %s ' % (self.get_entry('CMAKE_AR'), os.path.basename(target['filename'])))
+                    link_file.write('%s qc %s ' % (self.get_entry('CMAKE_AR'), os.path.basename(self.meson.get_target_filename(target))))
                     for target_file in self.meson.get_target_files(target):
-                        link_file.write('%s ' % os.path.join(os.path.dirname(target['filename']), target['id'], os.path.basename(target_file) + '.o'))
-                    link_file.write('\n%s %s' % (self.get_entry('CMAKE_RANLIB'), os.path.basename(target['filename'])))
+                        link_file.write('%s ' % os.path.join(os.path.dirname(self.meson.get_target_filename(target)), target['id'], os.path.basename(target_file) + '.o'))
+                    link_file.write('\n%s %s' % (self.get_entry('CMAKE_RANLIB'), os.path.basename(self.meson.get_target_filename(target))))
 
                 # CLion fetches target name from TARGET_PATH/build.make
                 with open(os.path.join(target_path, 'build.make'), 'w') as build_file:
