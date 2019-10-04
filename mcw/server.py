@@ -262,7 +262,7 @@ class ServerWrapper:
     def get_file_groups(self, target):
         sources = []
         for target_file in self.meson.get_target_files(target):
-            sources.append(os.path.relpath(target_file, os.path.dirname(target['filename'])))
+            sources.append(os.path.relpath(target_file, os.path.dirname(self.meson.get_target_filename(target))))
         file_group = {
             'isGenerated': False,
             'sources': sources,
@@ -300,10 +300,10 @@ class ServerWrapper:
             target['name'] = mtarget['name']
             target['fullName'] = mtarget['name']
             target['artifacts'] = [
-                os.path.join(self.meson.build_dir, mtarget['filename'])
+                os.path.join(self.meson.build_dir, self.meson.get_target_filename(mtarget))
             ]
-            target['buildDirectory'] = os.path.join(self.cmake.build_dir, os.path.dirname(mtarget['filename']))
-            target['sourceDirectory'] = os.path.join(self.cmake.source_dir, os.path.dirname(mtarget['filename']))
+            target['buildDirectory'] = os.path.join(self.cmake.build_dir, os.path.dirname(self.meson.get_target_filename(mtarget)))
+            target['sourceDirectory'] = os.path.join(self.cmake.source_dir, os.path.dirname(self.meson.get_target_filename(mtarget)))
             target['type'] = type_mapper[mtarget['type']]
             target['fileGroups'] = self.get_file_groups(mtarget)
             project['targets'].append(target)
