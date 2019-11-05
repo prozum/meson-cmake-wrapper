@@ -37,7 +37,7 @@ $ mcw -G"CodeBlocks - Ninja" -DCMAKE_BUILD_TYPE=Debug <build-dir>
 2. In Code::Blocks open: `<build-dir>/<project-name>.cbp` 
 
 ### QtCreator
-1. In CMake settings (Tools > Options... > Build & Run > CMake):
+1. In CMake settings (Tools > Options... > Kits > CMake):
 Add manual CMake option with path of `mcw`.
 
 2. Create an empty `CMakeLists.txt` file in root of project.
