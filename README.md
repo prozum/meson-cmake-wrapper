@@ -2,6 +2,7 @@
 
 # [meson-cmake-wrapper](https://gitlab.com/prozum/devel/meson-cmake-wrapper/)
 New maintainer needed! Check [Issue](https://github.com/prozum/meson-cmake-wrapper/issues/22)
+
 Build system wrapper that provides Meson integration in CMake IDE's.
 
 ## Install
