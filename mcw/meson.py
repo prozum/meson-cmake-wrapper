@@ -227,12 +227,14 @@ class Meson:
         return os.path.join(self.build_dir, self.get_target_filename(target))
 
     def get_target_filename(self, target):
-        if self.get_version()[1] >= 50:
-            return target['filename'][0]
+        filename = target['filename']
+        if "str" in str(type(filename)):
+            return filename
         else:
-            return target['filename']
+            return filename[0]
 
     def get_options(self):
+        
         meson_options = []
 
         if self.cross_file:

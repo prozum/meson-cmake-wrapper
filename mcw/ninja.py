@@ -44,6 +44,11 @@ class NinjaBackend:
     def get_target(self, target_name):
         target = next((t for t in self.meson.get_targets() if t['name'] == target_name), None)
         if target:
-            return target['filename']
+            # Comment other solution
+            # target_filename = self.meson.get_target_filename(target)
+            # base_dirname = os.path.basename(os.path.dirname(target_filename))
+            # base_filename = os.path.basename(target_filename)
+            # return os.path.join(base_dirname, base_filename)
+            return target['name']
 
         return target_name

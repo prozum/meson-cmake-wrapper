@@ -458,7 +458,7 @@ class CMakeWrapper:
             'name': 'all',
             'id': 'all',
             'type': 'custom',
-            'filename': ''
+            'filename': ['']
         }
 
         for target in [all_target] + self.meson.get_targets():
