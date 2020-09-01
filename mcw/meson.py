@@ -232,7 +232,7 @@ class Meson:
 
         if isinstance(filename, list):
             if len(filename) > 1:
-                self.logger.warning('Target {} has more than 1 filename {}'.format(target['name'], filename))
+                self.logger.debug('Target {} has more than 1 filename {}'.format(target['name'], filename))
             return filename[0]
         else:
             return filename
