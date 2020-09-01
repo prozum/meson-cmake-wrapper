@@ -48,6 +48,14 @@ class CMakeWrapper:
             self.server = UnixSocketServer(self)
         self.tool = CommandToolWrapper(self)
         self._datetime_str = datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+        if 'MCW_LOG_LEVEL' in os.environ:
+            self.debug = int(os.environ['MCW_LOG_LEVEL'])
+        else:
+            self.debug = 1
+        if 'MCW_LOG_TO_DIFFERENT_FILES' in os.environ:
+            self._log_to_different_files = bool(os.environ['MCW_LOG_TO_DIFFERENT_FILES'])
+        else:
+            self._log_to_different_files = False
         self.init_logging()
 
     def run(self, args):
@@ -211,11 +219,6 @@ class CMakeWrapper:
         self.tool.run(self.command_args)
 
     def init_logging(self, dir=None):
-
-        if 'MCW_LOG_LEVEL' in os.environ:
-            self.debug = int(os.environ['MCW_LOG_LEVEL'])
-        else:
-            self.debug = 1
         # Setup loggers
         loggers = []
         self.logger = logging.getLogger('CMake Wrapper')
@@ -234,8 +237,13 @@ class CMakeWrapper:
         handlers = []
         file_handler = None
         if dir:
+            if self._log_to_different_files:
+                log_file_name = 'meson-cmake-wrapper-{}.log'.format(self._datetime_str)
+            else:
+                log_file_name = 'meson-cmake-wrapper.log'
+            log_path = os.path.join(dir, log_file_name)
 
-            file_handler = logging.FileHandler(os.path.join(dir, 'meson-cmake-wrapper-{}.log'.format(self._datetime_str)))
+            file_handler = logging.FileHandler(log_path)
             file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(logger_fmt_with_func)
             handlers.append(file_handler)
