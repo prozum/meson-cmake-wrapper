@@ -1,5 +1,15 @@
 import logging
 
+logger_fmt_with_func = logging.Formatter(
+    '%(asctime)s - %(name)s'
+    '-%(funcName)s()'
+    ': %(message)s'
+)
+
+logger_fmt = logging.Formatter(
+    '%(asctime)s - %(name)s'
+    ': %(message)s'
+)
 
 class ServerLogHandler(logging.Handler):
     def __init__(self, server):

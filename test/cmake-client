@@ -36,12 +36,6 @@ class CMakeClient:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
-    def log(self, msg):
-        if isinstance(msg, Exception):
-            self.logger.info(msg, exc_info=msg)
-        else:
-            self.logger.info(msg)
-
     def run(self):
         try:
             self.connect()
@@ -70,7 +64,7 @@ class CMakeClient:
         except ConnectionRefusedError:
             print('Could not connect to: ' + self.pipe)
         except Exception as e:
-            self.log(e)
+            self.logger.error('Uncaught error', exc_info=e)
             raise e
         finally:
             self.cleanup()
@@ -106,7 +100,7 @@ class CMakeClient:
         request['cookie'] = str(random())
         self.cookies[request['type']] = request['cookie']
 
-        self.log('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
+        self.logger.debug('Sent (%s) "%s"' % (request['type'], json.dumps(request, indent=4, sort_keys=True)))
         request = SERVER_HEADER + json.dumps(request).encode('utf-8') + SERVER_FOOTER
         self.write(request)
 
@@ -118,9 +112,9 @@ class CMakeClient:
         for response in responses:
             response = json.loads(response)
             if 'inReplyTo' in response:
-                self.log('Received %s: (%s)\n%s' % (response['type'], response['inReplyTo'], json.dumps(response, indent=4, sort_keys=True)))
+                self.logger.debug('Received %s: (%s)\n%s' % (response['type'], response['inReplyTo'], json.dumps(response, indent=4, sort_keys=True)))
             else:
-                self.log('Received %s:\n%s' % (response['type'], json.dumps(response, indent=4, sort_keys=True)))
+                self.logger.debug('Received %s:\n%s' % (response['type'], json.dumps(response, indent=4, sort_keys=True)))
             self.responses.append(response)
 
     def check_cookie(self, response):
@@ -211,7 +205,7 @@ class UnixSocketClient(CMakeClient):
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.pipe)
-        self.log('Connected to socket: ' + self.pipe)
+        self.logger.info('Connected to socket: ' + self.pipe)
 
     def cleanup(self):
         self.sock.close()

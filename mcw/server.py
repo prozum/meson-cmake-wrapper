@@ -1,6 +1,7 @@
 import os
 import json
 import socket
+import logging
 
 SERVER_HEADER = b'\n[== "CMake Server" ==[\n'
 SERVER_FOOTER = b'\n]== "CMake Server" ==]\n'
@@ -20,12 +21,11 @@ class ServerWrapper:
         self.requests = []
         self.protocol_version = (1, 1)
         self.cookies = {}
+        self.logger = logging.getLogger('Server')
 
-    def log(self, msg):
-        if isinstance(msg, Exception):
-            self.logger.info(msg, exc_info=msg)
-        else:
-            self.logger.info(msg)
+    def get_logger(self):
+        return self.logger
+
 
     def run(self, args):
         try:
@@ -33,7 +33,7 @@ class ServerWrapper:
             self.connected = True
             self.handle_hello()
             self.handle_handshake()
-            self.log('running on "%s"' % self.pipe)
+            self.logger.info('running on "%s"' % self.pipe)
             while 1:
                 request = self.recv()
                 if not request:
@@ -41,14 +41,14 @@ class ServerWrapper:
                     break
 
                 if not hasattr(self, 'handle_' + request['type'].lower()):
-                    self.log('unhandled request: "%s"' % request)
+                    self.logger.warning('unhandled request: "%s"' % request)
                     break
                 getattr(self, 'handle_' + request['type'].lower())(request)
         except BrokenPipeError:
             self.connected = False
-            self.log('lost connection to client')
+            self.logger.error('lost connection to client')
         finally:
-            self.log('closing connection')
+            self.logger.info('closing connection')
             self.cleanup()
 
     def connect(self, args):
@@ -81,9 +81,9 @@ class ServerWrapper:
             if response['inReplyTo'] in self.cookies:
                 response['cookie'] = self.cookies[response['inReplyTo']]
             if log:
-                self.log('%s (%s) "%s"' % (response['inReplyTo'], response['type'], response))
+                self.logger.debug('%s (%s) "%s"' % (response['inReplyTo'], response['type'], response))
         elif log:
-            self.log(response)
+            self.logger.debug(response)
 
         response = SERVER_HEADER + json.dumps(response).encode('utf-8') + SERVER_FOOTER
         self.write(response)
@@ -97,7 +97,7 @@ class ServerWrapper:
             request = json.loads(request)
             if 'cookie' in request:
                 self.cookies[request['type']] = request['cookie']
-            self.log('received (%s) "%s"' % (request['type'], request))
+            self.logger.debug('received (%s) "%s"' % (request['type'], request))
             self.requests.append(request)
 
     def send_reply(self, reply_to, log=True):
@@ -262,7 +262,7 @@ class ServerWrapper:
     def get_file_groups(self, target):
         sources = []
         for target_file in self.meson.get_target_files(target):
-            sources.append(os.path.relpath(target_file, os.path.dirname(target['filename'])))
+            sources.append(os.path.relpath(target_file, os.path.dirname(self.meson.get_target_filename(target))))
         file_group = {
             'isGenerated': False,
             'sources': sources,
@@ -302,8 +302,9 @@ class ServerWrapper:
             target['artifacts'] = [
                 os.path.join(self.meson.build_dir, mtarget['filename'])
             ]
-            target['buildDirectory'] = os.path.join(self.cmake.build_dir, os.path.dirname(mtarget['filename']))
-            target['sourceDirectory'] = os.path.join(self.cmake.source_dir, os.path.dirname(mtarget['filename']))
+            file_parent = os.path.dirname(self.meson.get_target_filename(mtarget))
+            target['buildDirectory'] = os.path.join(self.cmake.build_dir, file_parent)
+            target['sourceDirectory'] = os.path.join(self.cmake.source_dir, file_parent)
             target['type'] = type_mapper[mtarget['type']]
             target['fileGroups'] = self.get_file_groups(mtarget)
             project['targets'].append(target)

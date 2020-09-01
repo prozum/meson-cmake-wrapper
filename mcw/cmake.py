@@ -1,3 +1,4 @@
+from _datetime import datetime
 import os
 import sys
 import pickle
@@ -6,22 +7,31 @@ import logging
 import json
 import xml.etree.ElementTree as ETree
 
-from .logging import ServerLogHandler
+from .logging import ServerLogHandler, logger_fmt, logger_fmt_with_func
 from .util import find_executables
 from .commandtool import CommandToolWrapper
 from .server import (UnixSocketServer, NamedPipeServer)
 from .meson import Meson
+from typing import NamedTuple, List, Iterable, Union
 
+
+class cmake_target_t(NamedTuple):
+    name: str
+    id: str
+    type: str
+    filename: Union[None, str]
 
 class CMakeWrapper:
     """
     Class that emulates CMake commands and translates them to the equivalent in Meson.
     """
+    debug: int
+    logger: logging.Logger
 
     def __init__(self):
         self.version = [3, 10, 0]
         self.path = sys.argv[0]
-        self.debug = False
+        self.debug = 1
         self.command = 'generate'
         self.generator = None
         self.build_type = None
@@ -37,13 +47,22 @@ class CMakeWrapper:
         else:
             self.server = UnixSocketServer(self)
         self.tool = CommandToolWrapper(self)
-        self.logger = None
+        self._datetime_str = datetime.now().strftime('%Y%m%d-%H%M%S.%f')
+        if 'MCW_LOG_LEVEL' in os.environ:
+            self.debug = int(os.environ['MCW_LOG_LEVEL'])
+        else:
+            self.debug = 1
+        if 'MCW_LOG_TO_DIFFERENT_FILES' in os.environ:
+            self._log_to_different_files = bool(os.environ['MCW_LOG_TO_DIFFERENT_FILES'])
+        else:
+            self._log_to_different_files = False
+        self.init_logging()
 
     def run(self, args):
         self.init_logging()
 
-        self.log('(args) "%s"' % args)
-        self.log('(cwd) "%s"' % os.getcwd())
+        self.logger.info('(args) "%s"' % args)
+        self.logger.info('(cwd) "%s"' % os.getcwd())
 
         # debug_connect()
 
@@ -59,10 +78,10 @@ class CMakeWrapper:
             getattr(self, self.command + '_cmd')()
         except RuntimeError as e:
             print(e.args[0])
-            self.log(e)
+            self.logger.error(e.args[0], exc_info=e)
             exit(1)
         except Exception as e:
-            self.log(e)
+            self.logger.error('Uncaught error.', exc_info=e)
             raise e
         self.save_cache_entries()
 
@@ -204,50 +223,59 @@ class CMakeWrapper:
         loggers = []
         self.logger = logging.getLogger('CMake Wrapper')
         loggers.append(self.logger)
-        self.meson.logger = logging.getLogger('Meson')
-        loggers.append(self.meson.logger)
-        self.server.logger = logging.getLogger('Server')
-        loggers.append(self.server.logger)
+        loggers.append(self.meson.get_logger())
+        loggers.append(self.server.get_logger())
 
         # Cleanup if reinitialized
         for logger in loggers:
             logger.handlers = []
 
-        if not dir and self.debug:
+        if not dir and self.debug > 0:
             dir = os.getcwd()
 
         # Setup handlers and formatters
         handlers = []
+        file_handler = None
         if dir:
-            handler = logging.FileHandler(os.path.join(dir, 'meson-cmake-wrapper.log'))
-            handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(name)s: %(message)s')
-            handler.setFormatter(formatter)
-            handlers.append(handler)
+            if self._log_to_different_files:
+                log_file_name = 'meson-cmake-wrapper-{}.log'.format(self._datetime_str)
+            else:
+                log_file_name = 'meson-cmake-wrapper.log'
+            log_path = os.path.join(dir, log_file_name)
 
-        if self.debug:
-            handler = logging.StreamHandler(sys.stderr)
-            handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(name)s: %(message)s')
-            handler.setFormatter(formatter)
-            handlers.append(handler)
-
-            handler = ServerLogHandler(self.server)
-            handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(name)s: %(message)s')
-            handler.setFormatter(formatter)
-            handlers.append(handler)
-
-        for logger in loggers:
-            logger.setLevel(logging.INFO)
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(logger_fmt_with_func)
+            handlers.append(file_handler)
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(logging.WARN)
+        stderr_handler.setFormatter(logger_fmt)
+        handlers.append(stderr_handler)
+        server_handler = ServerLogHandler(self.server)
+        server_handler.setLevel(logging.WARN)
+        server_handler.setFormatter(logger_fmt)
+        handlers.append(server_handler)
+        logger_level = logging.INFO
+        if self.debug == 0:
             for handler in handlers:
-                logger.addHandler(handler)
+                handler.setLevel(logging.WARN)
+            logger_level = logging.WARN
+        if self.debug >= 2:
+            server_handler.setLevel(logging.INFO)
+            logger_level = logging.INFO
+        if self.debug >= 3:
+            if file_handler:
+                file_handler.setLevel(logging.DEBUG)
+            logger_level = logging.DEBUG
 
-    def log(self, msg):
-        if isinstance(msg, Exception):
-            self.logger.info(msg, exc_info=msg)
-        else:
-            self.logger.info(msg)
+        for file_handler in handlers:
+            if self.debug > 1:
+                file_handler.setFormatter(logger_fmt_with_func)
+        for logger in loggers:
+            if logger_level:
+                logger.setLevel(logger_level)
+            for file_handler in handlers:
+                logger.addHandler(file_handler)
 
     def set_generator(self, generator):
         if generator == 'Ninja':
@@ -264,7 +292,7 @@ class CMakeWrapper:
             raise Exception('Generator not supported: ' + generator)
         self.generator = generator
 
-        self.log('(generator) "%s"' % self.generator)
+        self.logger.info('(generator) "%s"' % self.generator)
 
     def set_source_dir(self, source_dir):
         if not os.path.exists(source_dir):
@@ -275,7 +303,7 @@ class CMakeWrapper:
         self.source_dir = os.path.abspath(source_dir)
         self.meson.source_dir = self.source_dir
 
-        self.log('(source_dir) "%s"' % self.source_dir)
+        self.logger.info('(source_dir) "%s"' % self.source_dir)
 
     def set_build_dir(self, build_dir):
         if not os.path.exists(build_dir):
@@ -296,7 +324,7 @@ class CMakeWrapper:
                 with open(meson_file, 'w') as file:
                     file.write('project(\'empty\')')
 
-        self.log('(build_dir) "%s"' % self.build_dir)
+        self.logger.info('(build_dir) "%s"' % self.build_dir)
 
     def set_build_type(self, build_type):
         self.build_type = build_type
@@ -313,7 +341,7 @@ class CMakeWrapper:
 
         self.cache_entries['CMAKE_BUILD_TYPE'] = (build_type, 'STRING')
 
-        self.log('(build_type) "%s"' % self.build_type)
+        self.logger.info('(build_type) "%s"' % self.build_type)
 
     def get_entry(self, entry):
         if entry in self.cache_entries:
@@ -416,6 +444,7 @@ class CMakeWrapper:
                 file.write('%s:%s=%s\n' % (entry[0], entry[1][1], entry[1][0]))
 
     def gen_cmake_project(self):
+        self.logger.warning('call gen_cmake_project()')
         with open(os.path.join(self.source_dir, 'CMakeLists.txt'), 'w') as file:
             file.write('cmake_minimum_required(VERSION %s)\n' % '.'.join(map(str, self.version)))
             file.write('project(%s)\n\n' % self.meson.get_project_name())
@@ -458,7 +487,7 @@ class CMakeWrapper:
             'name': 'all',
             'id': 'all',
             'type': 'custom',
-            'filename': ''
+            'filename': ['']
         }
 
         for target in [all_target] + self.meson.get_targets():
@@ -473,13 +502,14 @@ class CMakeWrapper:
                 'static library': '2',
                 'shared library': '3',
                 'custom': '4',
-                'run': '4'
+                'run': '4',
+                'shared module': '3' # Code::Blocks does not have shared module type as cmake and meson
             }[target['type']]
             ETree.SubElement(build_target, 'Option', {'type': ty})
 
             compiler = self.meson.get_compiler(target)
             if compiler:
-                ETree.SubElement(build_target, 'Option', {'compiler': 'gcc'})
+                ETree.SubElement(build_target, 'Option', {'compiler': compiler})
 
             compiler = ETree.SubElement(build_target, 'Compiler')
             for define in self.meson.get_defines(target):
