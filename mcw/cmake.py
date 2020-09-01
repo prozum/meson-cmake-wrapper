@@ -47,6 +47,7 @@ class CMakeWrapper:
         else:
             self.server = UnixSocketServer(self)
         self.tool = CommandToolWrapper(self)
+        self._datetime_str = datetime.now().strftime('%Y%m%d-%H%M%S.%f')
         self.init_logging()
 
     def run(self, args):
@@ -231,12 +232,13 @@ class CMakeWrapper:
 
         # Setup handlers and formatters
         handlers = []
+        file_handler = None
         if dir:
-            datetime_str = datetime.now().strftime('%Y%m%d-%H%M%S.%f')
-            handler = logging.FileHandler(os.path.join(dir, 'meson-cmake-wrapper-{}.log'.format(datetime_str)))
-            handler.setLevel(logging.INFO)
-            handler.setFormatter(logger_fmt_with_func)
-            handlers.append(handler)
+
+            file_handler = logging.FileHandler(os.path.join(dir, 'meson-cmake-wrapper-{}.log'.format(self._datetime_str)))
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(logger_fmt_with_func)
+            handlers.append(file_handler)
         stderr_handler = logging.StreamHandler(sys.stderr)
         stderr_handler.setLevel(logging.WARN)
         stderr_handler.setFormatter(logger_fmt)
@@ -245,24 +247,27 @@ class CMakeWrapper:
         server_handler.setLevel(logging.WARN)
         server_handler.setFormatter(logger_fmt)
         handlers.append(server_handler)
-        logger_level = None
+        logger_level = logging.INFO
         if self.debug == 0:
+            for handler in handlers:
+                handler.setLevel(logging.WARN)
             logger_level = logging.WARN
-        if self.debug == 2:
+        if self.debug >= 2:
+            server_handler.setLevel(logging.INFO)
             logger_level = logging.INFO
         if self.debug >= 3:
+            if file_handler:
+                file_handler.setLevel(logging.DEBUG)
             logger_level = logging.DEBUG
 
-        for handler in handlers:
-            if logger_level is not None:
-                handler.setLevel(logger_level)
+        for file_handler in handlers:
             if self.debug > 1:
-                handler.setFormatter(logger_fmt_with_func)
+                file_handler.setFormatter(logger_fmt_with_func)
         for logger in loggers:
             if logger_level:
                 logger.setLevel(logger_level)
-            for handler in handlers:
-                logger.addHandler(handler)
+            for file_handler in handlers:
+                logger.addHandler(file_handler)
 
     def set_generator(self, generator):
         if generator == 'Ninja':
@@ -490,7 +495,7 @@ class CMakeWrapper:
                 'shared library': '3',
                 'custom': '4',
                 'run': '4',
-                'shared module': '3' # I do not use Code::Blocks, does it has shared module type as cmake and meson?
+                'shared module': '3' # Code::Blocks does not have shared module type as cmake and meson
             }[target['type']]
             ETree.SubElement(build_target, 'Option', {'type': ty})
 
