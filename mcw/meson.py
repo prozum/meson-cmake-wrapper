@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import logging
 
 from .ninja import NinjaBackend
 
@@ -28,14 +29,12 @@ class Meson:
         self.c_compile_commands = None
         self.c_compile_commands_target = {}
         self.c_default_inc_dirs = {}
+        self.logger = logging.getLogger('Meson')
 
-    def log(self, msg):
-        if isinstance(msg, Exception):
-            self.logger.info(msg, exc_info=msg)
-        else:
-            self.logger.info(msg)
+    def get_logger(self):
+        return self.logger
 
-    def call(self, args, show=False):
+    def call(self, args, show=False) -> str:
         child = subprocess.Popen([self.path] + args, stdout=subprocess.PIPE)
         fulloutput = b''
         while True:
@@ -89,8 +88,10 @@ class Meson:
     def get_targets(self):
         if not self.c_targets:
             output = self.call(['introspect', '--targets', self.build_dir])
-            self.log('(targets) "%s"' % output)
+            self.logger.debug('(targets) "%s"' % output)
             self.c_targets = json.loads(output)
+            target_names = [ i ['name'] for i in self.c_targets]
+            self.logger.info('(targets) {}'.format(target_names))
         return self.c_targets
 
     def get_target_files(self, target):
@@ -108,9 +109,9 @@ class Meson:
             return self.c_target_files[id]
 
         # Handle meson versions before 0.50.0
-        self.log('(target) "%s"' % id)
+        self.logger.debug('(target) "%s"' % id)
         output = self.call(['introspect', '--target-files', id, self.build_dir])
-        self.log('(target files) "%s"' % output)
+        self.logger.debug('(target files) "%s"' % output)
 
         # Workaround https://github.com/mesonbuild/meson/issues/2783
         if output == '':
@@ -122,14 +123,14 @@ class Meson:
     def get_buildsystem_files(self):
         if not self.c_buildsystem_files:
             output = self.call(['introspect', '--buildsystem-files', self.build_dir])
-            self.log('(buildsystem files) "%s"' % output)
+            self.logger.debug('(buildsystem files) "%s"' % output)
             self.c_buildsystem_files = json.loads(output)
         return self.c_buildsystem_files
 
     def get_project_info(self):
         if not self.c_project_info:
             output = self.call(['introspect', '--projectinfo', self.build_dir])
-            self.log('(project info) "%s"' % output)
+            self.logger.info('(project info) "%s"' % output)
             self.c_project_info = json.loads(output)
         return self.c_project_info
 
@@ -227,10 +228,14 @@ class Meson:
         return os.path.join(self.build_dir, self.get_target_filename(target))
 
     def get_target_filename(self, target):
-        if self.get_version()[1] >= 50:
-            return target['filename'][0]
+        filename = target['filename']
+
+        if isinstance(filename, list):
+            if len(filename) > 1:
+                self.logger.warning('Target {} has more than 1 filename {}'.format(target['name'], filename))
+            return filename[0]
         else:
-            return target['filename']
+            return filename
 
     def get_options(self):
         meson_options = []
